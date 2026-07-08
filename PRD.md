@@ -1,7 +1,7 @@
 # PRD: 多级记忆流 AI 酒馆 (Multi-Level Memory Stream AI Tavern)
 
-> 版本: v1.14-draft
-> 状态: 需求定义阶段（已合并架构补丁 v14: SQLite FTS5 + Trigram 全文搜索引擎 — 毫秒级中文剧本检索 + 零运维 + 数据库触发器自动同步）
+> **版本: v2.2** (历史需求文档)
+> 状态: **已归档** — 本文档为早期产品需求定义，部分功能（如脏标记机制、乐观更新、Split Pane 预览、react-hook-form 等）**尚未实现**。实际代码状态请以 [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) 为准。
 > 核心定位: 极度轻量、纯前端、以"多级记忆流"为核心的现代化 AI 剧本沙盒引擎
 
 ---
@@ -1419,5 +1419,3 @@ assemble(savId, userInput, config)
 | 无请求队列 | 用户连续发送时直接取消前一个请求 | 简化状态管理，符合对话直觉 |
 
 ---
-
-*文档结束*

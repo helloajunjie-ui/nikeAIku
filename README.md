@@ -1,6 +1,7 @@
 # NIKO 酒馆 — Multi-Level Memory Stream AI Tavern
 
 > **版本: v2.2** | 基于多层记忆流的 AI 角色扮演酒馆
+> 实际代码状态请以 [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) 为准。
 
 ## 项目定位
 
@@ -46,9 +47,9 @@ cd backend && go build -o server.exe . && server.exe
 | 层级 | 名称 | 触发时机 | 存储位置 |
 |------|------|----------|----------|
 | L0 | 初始信息 | 游戏开始时加载 | IndexedDB `scenarios` |
-| L1 | 短期摘要 | 每 3 回合 | IndexedDB `memories` |
-| L2 | 世界书条目 | 每 5 回合 | IndexedDB `memories` |
-| L3 | 剧情主线 | 每 10 回合 | IndexedDB `memories` |
+| L1 | 短期摘要 | 每 5 回合 | IndexedDB `dynamic_memories` |
+| L2 | 世界书条目 | 每 3 回合 | IndexedDB `dynamic_memories` |
+| L3 | 剧情主线 | 每 10 回合 | IndexedDB `dynamic_memories` |
 
 ### Hook Composition 架构
 
@@ -94,7 +95,7 @@ backend/
 ## 详细文档
 
 - [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) — 完整架构文档（含所有文件行数、技术债记录、版本差异表）
-- [`PRD.md`](PRD.md) — 产品需求文档
+- [`PRD.md`](PRD.md) — 历史产品需求文档（v2.2，部分功能未实现，仅供参考）
 
 ## 技术债记录
 
