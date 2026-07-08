@@ -69,8 +69,8 @@ export function createMemoryModelCaller(
           { role: 'user', content: userContent },
         ],
         temperature: 0.3,
-        max_tokens: 1024,
         stream: false,
+        max_tokens: 8192,
       };
     } else {
       chatUrl = memoryBaseUrl; // 平台代理直接 POST 到 /api/chat/proxy
@@ -82,6 +82,7 @@ export function createMemoryModelCaller(
           { role: 'user', content: userContent },
         ],
         stream: false,
+        max_tokens: 8192,
       };
     }
     const resp = await fetch(chatUrl, {

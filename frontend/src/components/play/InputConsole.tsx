@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import type { DynamicMemory, EngineStatus } from '../../types';
 import type { SaveItem, AdminPlatformModel } from '../../utils/api';
-import { listActiveModels } from '../../utils/api';
+import { adminListModels } from '../../utils/api';
 
 type InputConsoleVariant = 'header' | 'input' | 'full';
 
@@ -20,6 +20,9 @@ interface InputConsoleProps {
   // BYOK 开关
   useByok: boolean;
   onSetUseByok: (v: boolean) => void;
+  // 流式/非流式开关
+  useStream: boolean;
+  onSetUseStream: (v: boolean) => void;
   // 引擎状态
   engineStatus: EngineStatus;
   // 输入
@@ -67,6 +70,7 @@ export const InputConsole: React.FC<InputConsoleProps> = ({
   scenarioName, saveName,
   modelKey, onModelKeyChange,
   useByok, onSetUseByok,
+  useStream, onSetUseStream,
   engineStatus,
   input, isGenerating, onInputChange, onSend, onCancel,
   showAuthorNotes, authorNotes, showWorldbook, worldbookEntries,
@@ -86,21 +90,37 @@ export const InputConsole: React.FC<InputConsoleProps> = ({
     return null;
   })();
 
-  // 平台活跃模型列表（useByok=false 时使用）
+  // 平台模型列表（useByok=false 时使用）
+  // 注意：使用 adminListModels 获取所有模型（包括已禁用的），
+  // 因为用户需要能在所有已配置的模型之间切换。
+  // 禁用状态在 Admin 面板中管理，不影响用户选择。
   const [platformModels, setPlatformModels] = useState<AdminPlatformModel[]>([]);
   useEffect(() => {
     if (!showHeader) return;
-    listActiveModels()
+    adminListModels()
       .then(setPlatformModels)
       .catch(() => {
         // 静默失败，保留空列表
       });
   }, [showHeader]);
 
+  // BYOK 模型列表（从 Settings 页测试连接时持久化到 localStorage）
+  const byokModels = (() => {
+    try {
+      const raw = localStorage.getItem('niko_byok_models');
+      if (raw) return JSON.parse(raw);
+    } catch { /* ignore */ }
+    return null;
+  })() as string[] | null;
+
   // 根据 useByok 决定模型选项
   const modelOptions = (() => {
     if (useByok) {
-      // BYOK 模式：只显示用户配置的模型
+      // BYOK 模式：显示 Settings 页测试连接拉到的全部模型
+      if (byokModels && byokModels.length > 0) {
+        return byokModels.map((id) => ({ value: id, label: id }));
+      }
+      // fallback：只有配置的单个模型
       if (byokCfg?.model) {
         return [{ value: byokCfg.model, label: byokCfg.model }];
       }
@@ -153,7 +173,30 @@ export const InputConsole: React.FC<InputConsoleProps> = ({
               ))}
             </select>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {/* 流式/非流式开关 */}
+            <label className="flex items-center gap-1.5 cursor-pointer" title={useStream ? '流式输出（逐字显示）' : '非流式输出（一次性显示）'}>
+              <span className={`text-[10px] ${useStream ? 'text-cyan-400' : 'text-gray-600'}`}>
+                {useStream ? '🌊 流式' : '📦 非流'}
+              </span>
+              <button
+                role="switch"
+                aria-checked={useStream}
+                onClick={() => {
+                  onSetUseStream(!useStream);
+                  localStorage.setItem('niko_use_stream', String(!useStream));
+                }}
+                className={`relative w-7 h-4 rounded-full transition-colors ${
+                  useStream ? 'bg-cyan-600' : 'bg-gray-600'
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform ${
+                    useStream ? 'translate-x-3' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </label>
             {/* BYOK 互斥开关 */}
             <label className="flex items-center gap-1.5 cursor-pointer" title={useByok ? '使用自有 API' : '使用平台代理'}>
               <span className={`text-[10px] ${useByok ? 'text-green-400' : 'text-gray-600'}`}>
@@ -417,52 +460,57 @@ export const InputConsole: React.FC<InputConsoleProps> = ({
       </>)}
 
       {showInput && (<>
-      {/* 快速操作按钮 + 输入框 */}
-      <div className="px-4 py-3 bg-[#1a1b24] border-t border-[#2a2b36]">
-        <div className="flex items-center gap-2 max-w-4xl mx-auto mb-2">
-          <button
-            onClick={onForkSave}
-            className="text-[10px] px-2 py-1 bg-[#252630] border border-[#2a2b36] rounded
-              text-gray-400 hover:text-purple-400 hover:border-purple-500/30 transition-colors"
-            title="创建分支存档"
-          >
-            🌿 分支
-          </button>
-        </div>
-        <div className="flex gap-2 max-w-4xl mx-auto">
-          <input
-            value={input}
-            onChange={(e) => onInputChange(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                onSend();
-              }
-            }}
-            placeholder="输入消息..."
-            disabled={isGenerating}
-            className="flex-1 bg-[#252630] border border-[#2a2b36] rounded-lg px-4 py-2.5 text-sm text-gray-200
-              placeholder-gray-600 focus:outline-none focus:border-purple-500 disabled:opacity-50 transition-colors"
-          />
-          {isGenerating ? (
+      {/* 快速操作按钮 + 输入框 — 悬浮座舱质感 */}
+      <div className="w-full bg-[#0e0f14]/80 backdrop-blur-2xl border-t border-white/[0.05] px-4 py-3 z-20">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex items-center gap-2 mb-2">
             <button
-              onClick={onCancel}
-              className="px-4 py-2.5 bg-red-600/80 hover:bg-red-500 text-white text-sm rounded-lg transition-colors"
+              onClick={onForkSave}
+              className="text-[10px] px-2 py-1 bg-[#252630] border border-[#2a2b36] rounded
+                text-gray-400 hover:text-purple-400 hover:border-purple-500/30 transition-colors"
+              title="创建分支存档"
             >
-              停止
+              🌿 分支
             </button>
-          ) : (
-            <button
-              onClick={onSend}
-              disabled={!input.trim()}
-              className="px-4 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:brightness-110
-                active:scale-95 active:brightness-90 text-white text-sm rounded-lg
-                disabled:opacity-50 disabled:cursor-not-allowed
-                transition-all duration-300 ease-bounce-soft"
-            >
-              发送
-            </button>
-          )}
+          </div>
+          <div className="flex gap-2 max-w-4xl mx-auto relative items-end">
+            <input
+              value={input}
+              onChange={(e) => onInputChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  onSend();
+                }
+              }}
+              placeholder="输入你的抉择，或选择上方的行动编号..."
+              disabled={isGenerating}
+              className="flex-1 bg-[#181922] border border-white/10 rounded-2xl px-5 py-3.5 text-sm text-gray-200
+                placeholder-gray-600 outline-none resize-none
+                focus:border-purple-500/50 focus:bg-[#1a1b26] focus:ring-4 focus:ring-purple-500/10
+                transition-all duration-300 disabled:opacity-50 scrollbar-thin"
+            />
+            {isGenerating ? (
+              <button
+                onClick={onCancel}
+                className="h-[52px] px-6 bg-red-600/80 hover:bg-red-500 text-white text-sm font-bold rounded-xl transition-all duration-300 shrink-0"
+              >
+                停止
+              </button>
+            ) : (
+              <button
+                onClick={onSend}
+                disabled={!input.trim()}
+                className="h-[52px] px-8 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl
+                  shadow-[0_4px_20px_rgba(147,51,234,0.3)] hover:shadow-[0_4px_24px_rgba(147,51,234,0.5)]
+                  active:scale-95
+                  disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
+                  transition-all duration-300 shrink-0"
+              >
+                发送
+              </button>
+            )}
+          </div>
         </div>
       </div>
       </>)}

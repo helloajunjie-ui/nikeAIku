@@ -172,22 +172,22 @@ export default function MemoryInspector({ savId, currentTurn }: MemoryInspectorP
           </div>
         </section>
 
-        {/* 🧠 L1 历史快照（日志） */}
+        {/* 🧠 L1 历史快照（日志）— 命运丝线 */}
         <section>
           <div className="flex items-center gap-2 mb-3">
             <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400">L1</span>
             <h4 className="text-xs font-bold text-gray-400">快照压缩日志 ({memories.l1.length})</h4>
           </div>
-          <div className="relative border-l border-white/10 ml-2 pl-4 space-y-4">
+          <div className="relative border-l-2 border-emerald-500/20 ml-2.5 pl-4 space-y-5 py-1">
             {memories.l1.length === 0 && (
               <p className="text-xs text-gray-600 italic">记忆库尚未满，等待第一次压缩...</p>
             )}
             {memories.l1.slice(0, 5).map((m, i) => {
               const desc: string = m.content?.description || m.content || '';
               return (
-                <div key={m.id || i} className="relative">
-                  <div className="absolute -left-[21px] top-1 w-2 h-2 rounded-full bg-emerald-500/30 border border-emerald-500" />
-                  <p className="text-[11px] leading-relaxed text-gray-400 line-clamp-3 hover:line-clamp-none transition-all">
+                <div key={m.id || i} className="relative group">
+                  <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-[#0e0f14] border-2 border-emerald-500/50 group-hover:border-emerald-400 group-hover:bg-emerald-500/20 transition-colors z-10" />
+                  <p className="text-[11px] leading-relaxed text-gray-500 group-hover:text-gray-300 line-clamp-3 hover:line-clamp-none transition-all duration-300 cursor-default">
                     {desc}
                   </p>
                 </div>

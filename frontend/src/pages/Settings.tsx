@@ -11,6 +11,7 @@ import { useAuthStore } from '../stores/authStore';
 
 // BYOK 配置的 localStorage key
 const BYOK_CONFIG_KEY = 'niko_byok_config';
+const BYOK_MODELS_KEY = 'niko_byok_models';
 
 interface ByokConfig {
   endpoint: string;
@@ -186,6 +187,8 @@ export const Settings: React.FC = () => {
       if (json.data && Array.isArray(json.data)) {
         const modelIds = json.data.map((m: any) => m.id);
         setFetchedModels(modelIds);
+        // 持久化模型列表到 localStorage，供聊天页面 BYOK 模式使用
+        localStorage.setItem(BYOK_MODELS_KEY, JSON.stringify(modelIds));
         if (modelIds.length > 0) {
           // 如果当前已选模型在列表中则保留，否则默认选第一个
           if (!modelIds.includes(byokConfig.model)) {

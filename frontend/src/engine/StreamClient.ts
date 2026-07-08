@@ -12,7 +12,6 @@ export class StreamClient {
   constructor(options: StreamClientOptions) {
     this.options = {
       temperature: 0.8,
-      maxTokens: 1024,
       ...options,
     };
   }
@@ -65,13 +64,14 @@ export class StreamClient {
           model_id: this.options.model,
           messages: fullMessages,
           stream: true,
+          max_tokens: 8192,
         }
       : {
           model: this.options.model,
           messages: fullMessages,
           stream: true,
           temperature: this.options.temperature ?? 0.8,
-          max_tokens: this.options.maxTokens ?? 1024,
+          max_tokens: 8192,
         };
 
     fetch(url, {

@@ -1,6 +1,6 @@
 # 架构文档: NIKO酒馆 — 实际代码状态
 
-> 版本: v2.1 (实际代码快照)
+> 版本: v2.2 (实际代码快照)
 > 对应 PRD: v1.14-draft
 > **本文档 100% 反映当前磁盘上 `.go` / `.ts` / `.tsx` 文件的真实状态。不包含未落地的虚构设计。**
 
@@ -85,6 +85,8 @@
 | **AI 渠道/模型偏好持久化 (v2.1)** | ✅ **已修复** | `useAIComm` 初始化从 `localStorage` 读取 `niko_model_pref`，见 [`useAIComm.ts`](frontend/src/hooks/useAIComm.ts) |
 | **硬编码值清理 (v2.1)** | ✅ **已修复** | 移除 `'gpt-3.5-turbo'` fallback、`'http://localhost:8080'` 硬编码，全部替换为相对路径 `/api/chat/proxy`，见 [`useAIComm.ts`](frontend/src/hooks/useAIComm.ts) / [`playEngineHelpers.ts`](frontend/src/utils/playEngineHelpers.ts) / [`StreamClient.ts`](frontend/src/engine/StreamClient.ts) |
 | **过期注释清理 (v2.1)** | ✅ **已清理** | 移除 `v1.8`/`v2.1`/`v3`/`v4` 版本标记注释，清理 `MemoryInspector.tsx` 非正式用语，见 [`usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts) / [`MemoryLoaderService.ts`](frontend/src/services/MemoryLoaderService.ts) / [`Saves.tsx`](frontend/src/pages/Saves.tsx) / [`Lobby.tsx`](frontend/src/pages/Lobby.tsx) / [`MemoryInspector.tsx`](frontend/src/components/play/MemoryInspector.tsx) |
+| **max_tokens: 8192 默认值 (v2.2)** | ✅ **已修复** | StreamClient 平台代理和 BYOK 直连 payload 均添加 `max_tokens: 8192`，记忆引擎 BYOK/平台代理 payload 同样添加，见 [`StreamClient.ts`](frontend/src/engine/StreamClient.ts) / [`playEngineHelpers.ts`](frontend/src/utils/playEngineHelpers.ts) |
+| **流式/非流式开关 (v2.2)** | ✅ **已新增** | 模型选择栏右侧新增 🌊 流式/📦 非流 切换开关，持久化到 `niko_use_stream` localStorage。非流模式走独立 fetch 路径（`stream: false`），一次性返回完整响应。见 [`InputConsole.tsx`](frontend/src/components/play/InputConsole.tsx) / [`useAIComm.ts`](frontend/src/hooks/useAIComm.ts) / [`usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts) / [`Play.tsx`](frontend/src/pages/Play.tsx) |
 
 ---
 
@@ -457,7 +459,7 @@ onDone: async (content, turn, userText) => {
 | [`frontend/src/App.tsx`](frontend/src/App.tsx) | 66 | 根组件 (Sidebar + TopBar + 页面切换 + Notification) |
 | [`frontend/src/index.css`](frontend/src/index.css) | 44 | Tailwind 基础 + 自定义滚动条 + 毛玻璃类 |
 | [`frontend/src/types/index.ts`](frontend/src/types/index.ts) | 219 | 所有 TypeScript 类型定义 |
-| [`frontend/src/engine/StreamClient.ts`](frontend/src/engine/StreamClient.ts) | 186 | SSE 流式客户端 (AbortController + 1 次重试) |
+| [`frontend/src/engine/StreamClient.ts`](frontend/src/engine/StreamClient.ts) | 186 | SSE 流式客户端 (AbortController + 1 次重试，max_tokens:8192 默认值) |
 | [`frontend/src/engine/TokenBudgetManager.ts`](frontend/src/engine/TokenBudgetManager.ts) | 149 | Token 估算 + 预算裁剪 (calculateM + budgetCheck) |
 | [`frontend/src/engine/PromptAssembler.ts`](frontend/src/engine/PromptAssembler.ts) | 119 | Prompt 组装管线 (并行加载 + 注意力权重拼接) |
 | [`frontend/src/db/index.ts`](frontend/src/db/index.ts) | 370 | IndexedDB CRUD (5 表 + forkSave + createSaveFromScenario + createSaveFromApiScenario) |
@@ -480,10 +482,10 @@ onDone: async (content, turn, userText) => {
 | [`frontend/src/pages/Creator.tsx`](frontend/src/pages/Creator.tsx) | 677 | 创作 (四 Tab/角色卡导入/编辑模式/Blueprint 预览) |
 | [`frontend/src/pages/Settings.tsx`](frontend/src/pages/Settings.tsx) | 535 | **个人设置**：三垂直 tab（账号与资产 / 算力通道(BYOK 真实 API 握手) / 数据管理）。不含管理功能。 |
 | [`frontend/src/pages/Admin.tsx`](frontend/src/pages/Admin.tsx) | 487 | **管理控制台**：五工业风 tab（全局中枢 / 仪表盘 / 模型货架 / 用户资产 / 内容巡查）。高密度、无玻璃拟态。 |
-| [`frontend/src/pages/Play.tsx`](frontend/src/pages/Play.tsx) | 155 | 游玩界面 (Prologue/Greeting/Swipe/Undo/Reroll/Edit/Fork/Worldbook/Memory/Export/SaveSwitcher/AuthorNotes/L2高亮/Token显示/引擎状态灯 + MemoryInspector 侧边栏) |
+| [`frontend/src/pages/Play.tsx`](frontend/src/pages/Play.tsx) | 156 | 游玩界面 (Prologue/Greeting/Swipe/Undo/Reroll/Edit/Fork/Worldbook/Memory/Export/SaveSwitcher/AuthorNotes/L2高亮/Token显示/引擎状态灯 + 流式开关 + MemoryInspector 侧边栏) |
 | [`frontend/src/hooks/usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts) | 476 | **编排层 Hook** — 组合 usePlayStorage + useAIComm，纯事件路由。v2.0 从 972 行 God Object 瘦身至此。 |
 | [`frontend/src/hooks/usePlayStorage.ts`](frontend/src/hooks/usePlayStorage.ts) | 581 | **存储层 Hook** — hydrate/autoSync/CRUD/ref 管理。v2.0 从 usePlayEngine 提取。 |
-| [`frontend/src/hooks/useAIComm.ts`](frontend/src/hooks/useAIComm.ts) | 212 | **通信层 Hook** — StreamClient/模型选择/记忆模型调用器注入。v2.0 从 usePlayEngine 提取。 |
+| [`frontend/src/hooks/useAIComm.ts`](frontend/src/hooks/useAIComm.ts) | 220 | **通信层 Hook** — StreamClient/模型选择/记忆模型调用器注入 + 流式/非流式开关。v2.0 从 usePlayEngine 提取。 |
 
 ---
 

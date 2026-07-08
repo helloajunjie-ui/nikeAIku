@@ -53,8 +53,10 @@ export interface AIComm {
   highlightKeywords: string[];
   modelKey: string;
   useByok: boolean;
+  useStream: boolean;
   setModelKey: (v: string) => void;
   setUseByok: (v: boolean) => void;
+  setUseStream: (v: boolean) => void;
   triggerSend: (text: string, savId: string, turn: number) => Promise<void>;
   cancelStream: () => void;
   resolveModel: () => string;
@@ -73,6 +75,12 @@ export function useAIComm(callbacks: AICommCallbacks): AIComm {
   // ---- BYOK 状态（从 localStorage 恢复） ----
   const [useByok, setUseByok] = useState(() => {
     return localStorage.getItem('niko_use_byok') === 'true';
+  });
+
+  // ---- 流式/非流式开关（默认流式） ----
+  const [useStream, setUseStream] = useState(() => {
+    const saved = localStorage.getItem('niko_use_stream');
+    return saved !== null ? saved === 'true' : true;
   });
   const [modelKey, setModelKey] = useState(() => {
     // 优先从 BYOK config 读取
@@ -110,6 +118,70 @@ export function useAIComm(callbacks: AICommCallbacks): AIComm {
       setLastTokenCount(assembled.token_count);
       const model = resolveModel();
 
+      // 注入 modelCaller 到 memoryLoader（用于 L1/L2/L3 AI 记忆处理）
+      memoryLoader.setModelCaller(createMemoryModelCaller(useByok, model));
+
+      // ---- 非流模式：直接发非流式请求 ----
+      if (!useStream) {
+        setIsGenerating(true);
+        try {
+          const { baseUrl, apiKey, isProxy } = useByok
+            ? (() => {
+                const cfg = loadByokConfig();
+                if (!cfg) throw new Error('BYOK 配置未设置');
+                return { baseUrl: cfg.endpoint.replace(/\/+$/, ''), apiKey: cfg.apiKey, isProxy: false };
+              })()
+            : { baseUrl: '/api/chat/proxy', apiKey: api.getToken() || '', isProxy: true };
+
+          if (!useByok) optimisticDeductPoints(1);
+
+          const chatUrl = (() => {
+            const trimmed = baseUrl.replace(/\/+$/, '');
+            if (trimmed.endsWith('/chat/completions') || trimmed.endsWith('/proxy')) return trimmed;
+            if (trimmed.endsWith('/v1')) return trimmed + '/chat/completions';
+            return trimmed + '/v1/chat/completions';
+          })();
+
+          const bodyPayload = isProxy
+            ? { model_id: model, messages: [{ role: 'system', content: assembled.system_prompt }, ...assembled.messages], stream: false, max_tokens: 8192 }
+            : { model, messages: [{ role: 'system', content: assembled.system_prompt }, ...assembled.messages], stream: false, temperature: 0.8, max_tokens: 8192 };
+
+          const resp = await fetch(chatUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify(bodyPayload),
+          });
+          if (!resp.ok) {
+            const errText = await resp.text().catch(() => '');
+            throw new Error(`HTTP ${resp.status}: ${errText || resp.statusText}`);
+          }
+          const data = await resp.json();
+          const finalContent = data.choices?.[0]?.message?.content || '';
+
+          setStreamingContent('');
+          setIsGenerating(false);
+
+          await callbacks.onDone(finalContent, turn, text);
+
+          memoryLoader.loadL2(savId, text, finalContent).then((result: L2MatchResult) => {
+            setHighlightKeywords(result.keywords);
+          }).catch((err) => {
+            console.warn('[AIComm] L2 关键词加载失败:', err);
+          });
+
+          if (!useByok) {
+            refreshPoints().catch((err) => console.warn('[AIComm] 刷新积分失败:', err));
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : '未知错误';
+          addNotification({ type: 'error', message: `对话失败: ${msg}` });
+          setStreamingContent('');
+          setIsGenerating(false);
+        }
+        return;
+      }
+
+      // ---- 流式模式（原有逻辑） ----
       let client: StreamClient;
       if (useByok) {
         const cfg = loadByokConfig();
@@ -124,7 +196,6 @@ export function useAIComm(callbacks: AICommCallbacks): AIComm {
           apiKey: cfg.apiKey,
           model: cfg.model,
           temperature: 0.8,
-          maxTokens: 2048,
           isProxy: false,
         });
       } else {
@@ -137,9 +208,6 @@ export function useAIComm(callbacks: AICommCallbacks): AIComm {
         optimisticDeductPoints(1);
       }
       streamClientRef.current = client;
-
-      // 注入 modelCaller 到 memoryLoader（用于 L1/L2/L3 AI 记忆处理）
-      memoryLoader.setModelCaller(createMemoryModelCaller(useByok, model));
 
       let fullResponse = '';
 
@@ -155,17 +223,14 @@ export function useAIComm(callbacks: AICommCallbacks): AIComm {
           setIsGenerating(false);
           streamClientRef.current = null;
 
-          // 调用编排层的 onDone
           await callbacks.onDone(finalContent, turn, text);
 
-          // 快速高亮：L2 关键词
           memoryLoader.loadL2(savId, text, finalContent).then((result: L2MatchResult) => {
             setHighlightKeywords(result.keywords);
           }).catch((err) => {
             console.warn('[AIComm] L2 关键词加载失败:', err);
           });
 
-          // 刷新积分
           if (!useByok) {
             refreshPoints().catch((err) =>
               console.warn('[AIComm] 刷新积分失败:', err)
@@ -184,7 +249,7 @@ export function useAIComm(callbacks: AICommCallbacks): AIComm {
       addNotification({ type: 'error', message: `组装失败: ${msg}` });
       setIsGenerating(false);
     }
-  }, [useByok, resolveModel, callbacks, addNotification, optimisticDeductPoints, refreshPoints]);
+  }, [useByok, useStream, resolveModel, callbacks, addNotification, optimisticDeductPoints, refreshPoints]);
 
   // ============================================================
   // cancelStream — 取消当前流式请求
@@ -202,8 +267,10 @@ export function useAIComm(callbacks: AICommCallbacks): AIComm {
     highlightKeywords,
     modelKey,
     useByok,
+    useStream,
     setModelKey,
     setUseByok,
+    setUseStream,
     triggerSend,
     cancelStream,
     resolveModel,

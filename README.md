@@ -1,6 +1,6 @@
 # NIKO 酒馆 — Multi-Level Memory Stream AI Tavern
 
-> **版本: v2.1** | 基于多层记忆流的 AI 角色扮演酒馆
+> **版本: v2.2** | 基于多层记忆流的 AI 角色扮演酒馆
 
 ## 项目定位
 

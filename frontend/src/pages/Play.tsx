@@ -43,6 +43,8 @@ export const Play: React.FC = () => {
             onModelKeyChange={engine.setModelKey}
             useByok={engine.useByok}
             onSetUseByok={engine.setUseByok}
+            useStream={engine.useStream}
+            onSetUseStream={engine.setUseStream}
             engineStatus={engine.engineStatus}
             input={engine.input}
             isGenerating={engine.isGenerating}
@@ -109,6 +111,8 @@ export const Play: React.FC = () => {
             onModelKeyChange={engine.setModelKey}
             useByok={engine.useByok}
             onSetUseByok={engine.setUseByok}
+            useStream={engine.useStream}
+            onSetUseStream={engine.setUseStream}
             engineStatus={engine.engineStatus}
             input={engine.input}
             isGenerating={engine.isGenerating}

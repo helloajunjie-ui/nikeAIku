@@ -22,6 +22,7 @@ export interface PlayEngine {
   input: string;
   modelKey: string;
   useByok: boolean;
+  useStream: boolean;
   streamingContent: string;
   editingMsgId: string | null;
   editContent: string;
@@ -42,6 +43,7 @@ export interface PlayEngine {
   setInput: (v: string) => void;
   setModelKey: (v: string) => void;
   setUseByok: (v: boolean) => void;
+  setUseStream: (v: boolean) => void;
   setEditContent: (v: string) => void;
   setShowAuthorNotes: (v: boolean) => void;
   setShowWorldbook: (v: boolean) => void;
@@ -449,7 +451,7 @@ export function usePlayEngine(): PlayEngine {
     // 来自 gameStore
     conversations, isGenerating: aiComm.isGenerating, engineStatus,
     // 本地状态
-    input, modelKey: aiComm.modelKey, useByok: aiComm.useByok,
+    input, modelKey: aiComm.modelKey, useByok: aiComm.useByok, useStream: aiComm.useStream,
     streamingContent: aiComm.streamingContent,
     editingMsgId, editContent,
     showPrologue, prologueHtml, lastTokenCount: aiComm.lastTokenCount,
@@ -460,7 +462,7 @@ export function usePlayEngine(): PlayEngine {
     saveList: storage.saveList, showSaveSwitcher: storage.showSaveSwitcher,
     messagesEndRef,
     // setter
-    setInput, setModelKey: aiComm.setModelKey, setUseByok: aiComm.setUseByok,
+    setInput, setModelKey: aiComm.setModelKey, setUseByok: aiComm.setUseByok, setUseStream: aiComm.setUseStream,
     setEditContent, setShowAuthorNotes, setShowWorldbook,
     setShowSaveSwitcher: storage.setShowSaveSwitcher,
     setEditingWbId: storage.setEditingWbId,
