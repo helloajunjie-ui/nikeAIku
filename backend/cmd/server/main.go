@@ -36,6 +36,18 @@ func main() {
 	// 静态文件服务（图片）
 	r.Static("/images", cfg.Image.StoragePath)
 
+	// 前端静态文件服务（Docker 部署时 dist 目录与二进制同级）
+	r.StaticFile("/", "./dist/index.html")
+	r.Static("/assets", "./dist/assets")
+	// SPA fallback: 所有非 /api 路径回退到 index.html
+	r.NoRoute(func(c *gin.Context) {
+		if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
+			c.JSON(404, gin.H{"error": "not found"})
+			return
+		}
+		c.File("./dist/index.html")
+	})
+
 	// CORS 中间件
 	r.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
