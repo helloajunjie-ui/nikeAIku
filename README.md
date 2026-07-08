@@ -23,10 +23,62 @@ NIKO 酒馆是一个**多层记忆流 (Multi-Level Memory Stream)** AI 角色扮
 ### Docker 部署（推荐）
 
 ```bash
+# 1. 克隆仓库
+git clone https://github.com/helloajunjie-ui/nikeAIku.git
+cd nikeAIku
+
+# 2. 构建前端（生成 dist/）
+cd frontend
+npm install
+npm run build
+cd ..
+
+# 3. 配置环境变量
+echo "JWT_SECRET=your-secret-key-here" > .env
+# 可选：自定义端口（默认 8080）
+echo "SERVER_PORT=8080" >> .env
+
+# 4. 启动（首次构建镜像约 2-3 分钟）
 docker compose up -d
+
+# 5. 查看启动日志
+docker compose logs -f
+
+# 6. 访问 http://localhost:8080
 ```
 
-访问 `http://localhost:8080`。
+> **注意**: `JWT_SECRET` 是必填环境变量，未设置时 `docker compose up` 会报错退出。生产环境请使用足够强度的随机字符串。
+
+#### Docker 健康检查
+
+启动后约 15 秒（`start_period`），Docker 会每 30 秒探测 `http://localhost:8080/api/scenarios`。健康状态可通过以下命令查看：
+
+```bash
+docker compose ps
+# 输出示例：
+# NAME                IMAGE               STATUS
+# niko-tavern         niko-tavern         Up 2 minutes (healthy)
+```
+
+#### 资源限制
+
+| 参数 | 值 |
+|------|-----|
+| 内存限制 | 256 MB |
+| 内存预留 | 64 MB |
+| 重启策略 | unless-stopped |
+
+#### 数据持久化
+
+存档数据存储在 Docker 卷 `niko-data` 中，映射到容器内 `/app/data`：
+
+```bash
+# 查看卷位置
+docker volume inspect niko-tavern_niko-data
+
+# 备份数据
+docker run --rm -v niko-tavern_niko-data:/data -v %cd%:/backup alpine tar czf /backup/niko-backup.tar.gz -C /data .
+```
 
 ### 开发模式
 
