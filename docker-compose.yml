@@ -1,0 +1,24 @@
+# ============================================================
+# docker-compose.yml — NIKO酒馆 本地开发/部署
+# ============================================================
+version: '3.8'
+
+services:
+  niko-tavern:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - niko-data:/app/data
+    environment:
+      - GIN_MODE=release
+      - SERVER_PORT=8080
+      - DB_PATH=/app/data/niko-tavern.db
+      - IMAGE_DIR=/app/data/images
+      - JWT_SECRET=change-me-in-production
+    restart: unless-stopped
+
+volumes:
+  niko-data:
