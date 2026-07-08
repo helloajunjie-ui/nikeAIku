@@ -49,6 +49,23 @@ docker compose logs -f
 
 > **注意**: `JWT_SECRET` 是必填环境变量，未设置时 `docker compose up` 会报错退出。生产环境请使用足够强度的随机字符串。
 
+#### 服务器要求
+
+**最低配置**: 任何能运行 Docker 的 Linux VPS，1 核 512 MB 内存，1 GB 磁盘。
+
+**运行时实际消耗**: Go 单二进制约 45 MB RSS，无运行时依赖（Node.js 仅构建阶段需要，运行时不占用）。
+
+**推荐云服务器**:
+
+| 厂商 | 配置 | 参考价格 |
+|------|------|----------|
+| 阿里云 ECS (t6-c1m1.large) | 2C2G | ~50 CNY/月 |
+| 腾讯云 Lighthouse | 2C2G | ~40 CNY/月 |
+| AWS Lightsail | 1C1G | ~$5/月 |
+| 甲骨文 Cloud (Always Free) | AMD/ARM | **免费** |
+
+**不推荐**: Windows Server（Docker 支持有限）或纯手动部署（需额外安装 Go + Node.js 构建环境）。
+
 #### Docker 健康检查
 
 启动后约 15 秒（`start_period`），Docker 会每 30 秒探测 `http://localhost:8080/api/scenarios`。健康状态可通过以下命令查看：
