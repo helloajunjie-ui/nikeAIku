@@ -66,6 +66,13 @@ docker compose logs -f
 
 **不推荐**: Windows Server（Docker 支持有限）或纯手动部署（需额外安装 Go + Node.js 构建环境）。
 
+**并发承载能力**:
+
+| 场景 | 256 MB 可支撑 | 说明 |
+|------|---------------|------|
+| BYOK（每人用自己的 API Key） | **50-100 人同时在线** | 后端仅做 HTTP 透传，Go goroutine 处理数百并发无压力。SQLite 写入自动排队，不会丢数据 |
+| 共享 API Key | 取决于 Key 的 RPM 限制 | 256 MB 本身无瓶颈，但所有人共用同一个 Key 会被第三方限速 |
+
 #### Docker 健康检查
 
 启动后约 15 秒（`start_period`），Docker 会每 30 秒探测 `http://localhost:8080/api/scenarios`。健康状态可通过以下命令查看：
