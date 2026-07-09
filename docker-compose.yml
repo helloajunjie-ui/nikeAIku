@@ -1,16 +1,19 @@
 # ============================================================
-# docker-compose.yml — NIKO酒馆 生产部署
+# docker-compose.yml — NIKO酒馆 双容器生产部署
 # ============================================================
 # 使用方式:
-#   docker compose up -d                    # 启动（使用默认配置）
+#   docker compose up -d                    # 启动
 #   docker compose --env-file .env up -d    # 启动（使用自定义 .env）
 # ============================================================
 
 services:
-  niko-tavern:
+  # 1. 核心引擎：Go 后端
+  niko-backend:
     build:
-      context: .
+      context: ./backend
       dockerfile: Dockerfile
+    container_name: niko-backend
+    restart: unless-stopped
     ports:
       - "${SERVER_PORT:-8080}:8080"
     volumes:
@@ -24,7 +27,6 @@ services:
     env_file:
       - path: .env
         required: false
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${SERVER_PORT:-8080}/api/scenarios"]
       interval: 30s
@@ -37,6 +39,25 @@ services:
           memory: 256M
         reservations:
           memory: 64M
+
+  # 2. 绝美皮囊：前端 UI（Nginx 反向代理后端）
+  niko-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: niko-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      niko-backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 32M
 
 volumes:
   niko-data:
