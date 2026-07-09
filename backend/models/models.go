@@ -47,19 +47,31 @@ type GlobalConfig struct {
 	UpdatedAt int64  `gorm:"autoUpdateTime:milli" json:"updated_at"`
 }
 
+// AIProvider AI 渠道/提供商
+type AIProvider struct {
+	ID        string `gorm:"primaryKey;type:varchar(36)" json:"id"`
+	Name      string `gorm:"not null;type:varchar(100)" json:"name"`
+	BaseURL   string `gorm:"not null;type:varchar(500)" json:"base_url"`
+	APIKey    string `gorm:"not null;type:varchar(500)" json:"-"`
+	IsActive  bool   `gorm:"default:true" json:"is_active"`
+	CreatedAt int64  `gorm:"autoCreateTime:milli" json:"created_at"`
+	UpdatedAt int64  `gorm:"autoUpdateTime:milli" json:"updated_at"`
+}
+
+func (AIProvider) TableName() string { return "ai_providers" }
+
 // PlatformModel 平台大模型货架
 type PlatformModel struct {
 	ID             string  `gorm:"primaryKey;type:varchar(36)" json:"id"`
 	ModelID        string  `gorm:"not null;type:varchar(100)" json:"model_id"`
 	DisplayName    string  `gorm:"not null;type:varchar(100)" json:"display_name"`
+	ProviderID     string  `gorm:"type:varchar(36);index" json:"provider_id"`
 	ProviderFamily string  `gorm:"default:'';type:varchar(50)" json:"provider_family"`
 	Tags           string  `gorm:"type:text;default:'[]'" json:"tags"`
 	IsActive       bool    `gorm:"default:true" json:"is_active"`
 	CostPerTurn    int     `gorm:"default:0" json:"cost_per_turn"`
 	PriceCoeff     float64 `gorm:"default:0" json:"price_coeff"`
 	SortOrder      int     `gorm:"default:0" json:"sort_order"`
-	ProviderURL    string  `gorm:"not null;type:varchar(500)" json:"provider_url"`
-	APIKey         string  `gorm:"not null;type:varchar(500)" json:"-"`
 	CreatedAt      int64   `gorm:"autoCreateTime:milli" json:"created_at"`
 	UpdatedAt      int64   `gorm:"autoUpdateTime:milli" json:"updated_at"`
 }
@@ -145,14 +157,27 @@ type UpdateMasterPromptRequest struct {
 type CreatePlatformModelRequest struct {
 	ModelID        string  `json:"model_id" binding:"required"`
 	DisplayName    string  `json:"display_name" binding:"required"`
+	ProviderID     string  `json:"provider_id" binding:"required"`
 	ProviderFamily string  `json:"provider_family"`
 	Tags           string  `json:"tags"`
 	IsActive       bool    `json:"is_active"`
 	CostPerTurn    int     `json:"cost_per_turn"`
 	PriceCoeff     float64 `json:"price_coeff"`
 	SortOrder      int     `json:"sort_order"`
-	ProviderURL    string  `json:"provider_url" binding:"required"`
-	APIKey         string  `json:"api_key" binding:"required"`
+}
+
+type CreateAIProviderRequest struct {
+	Name     string `json:"name" binding:"required"`
+	BaseURL  string `json:"base_url" binding:"required"`
+	APIKey   string `json:"api_key" binding:"required"`
+	IsActive bool   `json:"is_active"`
+}
+
+type UpdateUserRequest struct {
+	Username string `json:"username"`
+	Role     string `json:"role"`
+	Password string `json:"password"`
+	Points   *int   `json:"points"`
 }
 
 type UpdatePointsRequest struct {
@@ -176,10 +201,14 @@ type NotificationCountResponse struct {
 }
 
 type DashboardResponse struct {
-	NewUsersToday  int              `json:"new_users_today"`
-	PointsConsumed int              `json:"points_consumed_today"`
-	TopScenarios   []Scenario       `json:"top_scenarios"`
-	ModelHealth    []ModelHealthDTO `json:"model_health"`
+	TotalUsers      int              `json:"total_users"`
+	NewUsersToday   int              `json:"new_users_today"`
+	TotalScenarios  int              `json:"total_scenarios"`
+	TotalSaves      int              `json:"total_saves"`
+	TotalPointsUsed int              `json:"total_points_used"`
+	ActiveModels    int              `json:"active_models"`
+	TopScenarios    []Scenario       `json:"top_scenarios"`
+	ModelHealth     []ModelHealthDTO `json:"model_health"`
 }
 
 type ModelHealthDTO struct {

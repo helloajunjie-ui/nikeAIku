@@ -37,6 +37,7 @@ func InitDatabase(cfg *config.Config) error {
 		&models.Scenario{},
 		&models.Save{},
 		&models.GlobalConfig{},
+		&models.AIProvider{},
 		&models.PlatformModel{},
 		&models.PointLog{},
 		&models.Image{},
@@ -148,41 +149,26 @@ func initDefaultConfigs() {
 		}
 	}
 
-	// 初始化默认平台模型（仅当表为空时）
-	var modelCount int64
-	DB.Model(&models.PlatformModel{}).Count(&modelCount)
-	if modelCount == 0 {
-		defaultModels := []models.PlatformModel{
+	// 初始化默认 AI 提供商（仅当表为空时）
+	var providerCount int64
+	DB.Model(&models.AIProvider{}).Count(&providerCount)
+	if providerCount == 0 {
+		defaultProviders := []models.AIProvider{
 			{
-				ID:             "MODEL_DEEPSEEK_CHAT",
-				ModelID:        "deepseek-chat",
-				DisplayName:    "DeepSeek V3",
-				ProviderFamily: "deepseek",
-				Tags:           `["推荐","快速"]`,
-				IsActive:       true,
-				CostPerTurn:    1,
-				PriceCoeff:     1.0,
-				SortOrder:      1,
-				ProviderURL:    "https://api.deepseek.com",
-				APIKey:         "",
-			},
-			{
-				ID:             "MODEL_DEEPSEEK_REASONER",
-				ModelID:        "deepseek-reasoner",
-				DisplayName:    "DeepSeek R1",
-				ProviderFamily: "deepseek",
-				Tags:           `["深度","推理"]`,
-				IsActive:       true,
-				CostPerTurn:    2,
-				PriceCoeff:     1.5,
-				SortOrder:      2,
-				ProviderURL:    "https://api.deepseek.com",
-				APIKey:         "",
+				ID:       "PROV_DEEPSEEK",
+				Name:     "DeepSeek 官方",
+				BaseURL:  "https://api.deepseek.com",
+				APIKey:   "",
+				IsActive: true,
 			},
 		}
-		for _, m := range defaultModels {
-			DB.Create(&m)
-			log.Printf("[DB] 初始化默认模型: %s (%s)", m.DisplayName, m.ModelID)
+		for _, p := range defaultProviders {
+			DB.Create(&p)
+			log.Printf("[DB] 初始化默认 AI 提供商: %s", p.Name)
 		}
 	}
+
+	// 注意：不再硬编码默认平台模型。
+	// 模型应通过渠道管理 → 测试连接 → 自动同步到模型货架，
+	// 或由管理员手动导入。见 BatchTestProviders / ImportProviderModels。
 }

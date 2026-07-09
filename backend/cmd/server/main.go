@@ -118,15 +118,26 @@ func main() {
 	adminGroup.Use(middleware.AdminAuth())
 	{
 		adminGroup.PUT("/config/master-prompt", handlers.UpdateMasterPrompt)
+		adminGroup.GET("/config/:key", handlers.GetGlobalConfig)
+		adminGroup.PUT("/config/:key", handlers.UpdateGlobalConfig)
 		adminGroup.GET("/platform-models", handlers.ListPlatformModels)
 		adminGroup.POST("/platform-models", handlers.CreatePlatformModel)
 		adminGroup.POST("/platform-models/:id/toggle", handlers.TogglePlatformModel)
 		adminGroup.GET("/users", handlers.ListUsers)
+		adminGroup.PUT("/users/:id", handlers.UpdateUser)
 		adminGroup.POST("/users/:id/points", handlers.UpdateUserPoints)
 		adminGroup.GET("/dashboard", handlers.GetDashboard)
 		adminGroup.POST("/scenarios/:id/ban", handlers.BanScenario)
 		adminGroup.GET("/scenarios/flagged", handlers.ListFlaggedScenarios)
 		adminGroup.GET("/models/health", handlers.GetModelHealth)
+		// AI Provider 管理
+		adminGroup.GET("/providers", handlers.ListProviders)
+		adminGroup.POST("/providers", handlers.CreateProvider)
+		adminGroup.PUT("/providers/:id", handlers.UpdateProvider)
+		adminGroup.POST("/providers/:id/toggle", handlers.ToggleProvider)
+		adminGroup.POST("/providers/:id/import-models", handlers.ImportProviderModels)
+		adminGroup.POST("/providers/test", handlers.TestProviderConnection)
+		adminGroup.POST("/providers/health-check", handlers.BatchTestProviders)
 	}
 
 	// 启动服务器

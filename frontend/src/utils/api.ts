@@ -212,7 +212,15 @@ export function getMasterPrompt(): Promise<{ master_prompt: string }> {
 }
 
 export function updateMasterPrompt(data: { master_prompt: string }): Promise<{ master_prompt: string }> {
-  return request<{ master_prompt: string }>('PUT', '/config/master-prompt', data);
+	return request<{ master_prompt: string }>('PUT', '/config/master-prompt', data);
+}
+
+export function getGlobalConfig(key: string): Promise<{ key: string; value: string }> {
+	return request<{ key: string; value: string }>('GET', `/admin/config/${key}`);
+}
+
+export function updateGlobalConfig(key: string, value: string): Promise<{ message: string }> {
+	return request<{ message: string }>('PUT', `/admin/config/${key}`, { value });
 }
 
 // ==================== Chat ====================
@@ -250,20 +258,30 @@ export interface AdminUser {
   role: string;
   status: number;
   created_at: number;
+  updated_at: number;
 }
 
 export interface AdminPlatformModel {
   id: string;
   model_id: string;
   display_name: string;
+  provider_id: string;
   provider_family: string;
   tags: string;
   is_active: boolean;
   cost_per_turn: number;
   price_coeff: number;
   sort_order: number;
-  provider_url: string;
   created_at: number;
+}
+
+export interface AdminProvider {
+  id: string;
+  name: string;
+  base_url: string;
+  is_active: boolean;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface DashboardData {
@@ -283,6 +301,10 @@ export function adminUpdatePoints(userId: string, points: number): Promise<{ poi
   return request<{ points: number }>('POST', `/admin/users/${userId}/points`, { amount: points, reason: '管理员调整' });
 }
 
+export function adminUpdateUser(userId: string, data: { username?: string; role?: string; password?: string; points?: number }): Promise<{ message: string }> {
+  return request<{ message: string }>('PUT', `/admin/users/${userId}`, data);
+}
+
 export function listActiveModels(): Promise<AdminPlatformModel[]> {
   return request<AdminPlatformModel[]>('GET', '/platform-models');
 }
@@ -291,12 +313,51 @@ export function adminListModels(): Promise<AdminPlatformModel[]> {
   return request<AdminPlatformModel[]>('GET', '/admin/platform-models');
 }
 
-export function adminCreateModel(data: { model_id: string; display_name: string; provider_family: string; provider_url: string; cost_per_turn: number; price_coeff?: number; tags?: string }): Promise<AdminPlatformModel> {
+export function adminCreateModel(data: { model_id: string; display_name: string; provider_id: string; provider_family: string; cost_per_turn: number; price_coeff?: number; tags?: string }): Promise<AdminPlatformModel> {
   return request<AdminPlatformModel>('POST', '/admin/platform-models', data);
 }
 
 export function adminToggleModel(id: string): Promise<AdminPlatformModel> {
   return request<AdminPlatformModel>('POST', `/admin/platform-models/${id}/toggle`);
+}
+
+// ==================== Admin: AI Provider ====================
+
+export function adminListProviders(): Promise<AdminProvider[]> {
+  return request<AdminProvider[]>('GET', '/admin/providers');
+}
+
+export function adminCreateProvider(data: { name: string; base_url: string; api_key: string; is_active?: boolean }): Promise<{ provider: AdminProvider; imported_count: number }> {
+  return request<{ provider: AdminProvider; imported_count: number }>('POST', '/admin/providers', data);
+}
+
+export function adminToggleProvider(id: string): Promise<AdminProvider> {
+  return request<AdminProvider>('POST', `/admin/providers/${id}/toggle`);
+}
+
+export function adminUpdateProvider(id: string, data: { base_url?: string; api_key?: string }): Promise<{ provider: AdminProvider; test_ok: boolean; imported_count: number }> {
+  return request<{ provider: AdminProvider; test_ok: boolean; imported_count: number }>('PUT', `/admin/providers/${id}`, data);
+}
+
+export function adminTestProviderConnection(data: { base_url: string; api_key: string; provider_id?: string }): Promise<{ success: boolean; message: string; models?: string[]; imported_count?: number }> {
+  return request<{ success: boolean; message: string; models?: string[]; imported_count?: number }>('POST', '/admin/providers/test', data);
+}
+
+export function adminImportProviderModels(providerId: string, models: string[]): Promise<{ message: string; created: number; skipped: number }> {
+  return request<{ message: string; created: number; skipped: number }>('POST', `/admin/providers/${providerId}/import-models`, { models });
+}
+
+export interface ProviderHealthStatus {
+  id: string;
+  name: string;
+  online: boolean;
+  message: string;
+  model_count: number;
+  new_models: number;
+}
+
+export function adminBatchTestProviders(): Promise<ProviderHealthStatus[]> {
+  return request<ProviderHealthStatus[]>('POST', '/admin/providers/health-check');
 }
 
 export function adminGetDashboard(): Promise<DashboardData> {
@@ -337,7 +398,7 @@ export interface ModelHealthItem {
 }
 
 export function getModelHealth(): Promise<ModelHealthItem[]> {
-  return request<ModelHealthItem[]>('GET', '/models/health');
+	return request<ModelHealthItem[]>('GET', '/admin/models/health');
 }
 
 // ==================== Image ====================

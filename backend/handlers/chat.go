@@ -23,10 +23,17 @@ func ChatProxy(c *gin.Context) {
 		return
 	}
 
-	// 查询模型配置
+	// 查询模型配置（按 model_id 而非主键 id 查询）
 	var model models.PlatformModel
-	if err := services.DB.Where("id = ? AND is_active = ?", req.ModelID, true).First(&model).Error; err != nil {
+	if err := services.DB.Where("model_id = ? AND is_active = ?", req.ModelID, true).First(&model).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该模型暂未开放或已下架"})
+		return
+	}
+
+	// 查询模型关联的 AI 提供商（获取 BaseURL 和 APIKey）
+	var provider models.AIProvider
+	if err := services.DB.Where("id = ? AND is_active = ?", model.ProviderID, true).First(&provider).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "该模型关联的 AI 提供商不可用"})
 		return
 	}
 
@@ -60,7 +67,7 @@ func ChatProxy(c *gin.Context) {
 
 	bodyBytes, _ := json.Marshal(openAIReq)
 
-	targetURL := buildChatURL(model.ProviderURL)
+	targetURL := buildChatURL(provider.BaseURL)
 	httpReq, err := http.NewRequest("POST", targetURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		rollbackPoints(userID.(string), model.CostPerTurn)
@@ -69,7 +76,7 @@ func ChatProxy(c *gin.Context) {
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+model.APIKey)
+	httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
 
 	startTime := time.Now()
 	client := &http.Client{Timeout: 60 * time.Second}

@@ -1,13 +1,18 @@
 package handlers
 
 import (
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/niko-tavern/backend/models"
 	"github.com/niko-tavern/backend/services"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // ListUsers 获取用户列表（Admin only）
@@ -44,6 +49,59 @@ func UpdateUserPoints(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "积分已更新"})
 }
 
+// UpdateUser 编辑用户信息（Admin only）
+func UpdateUser(c *gin.Context) {
+	userID := c.Param("id")
+
+	var req models.UpdateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	var user models.User
+	if err := services.DB.First(&user, "id = ?", userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
+		return
+	}
+
+	updates := map[string]interface{}{}
+
+	if req.Username != "" {
+		updates["username"] = req.Username
+	}
+	if req.Role != "" {
+		if req.Role != "user" && req.Role != "admin" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "角色只能是 user 或 admin"})
+			return
+		}
+		updates["role"] = req.Role
+	}
+	if req.Password != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "密码加密失败"})
+			return
+		}
+		updates["password_hash"] = string(hash)
+	}
+	if req.Points != nil {
+		updates["points"] = *req.Points
+	}
+
+	if len(updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "没有需要更新的字段"})
+		return
+	}
+
+	if err := services.DB.Model(&user).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新用户失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "用户已更新"})
+}
+
 // ListPlatformModels 获取模型货架列表（Admin only）
 func ListPlatformModels(c *gin.Context) {
 	var modelsList []models.PlatformModel
@@ -70,14 +128,13 @@ func CreatePlatformModel(c *gin.Context) {
 		ID:             "MODEL_" + uuid.New().String()[:12],
 		ModelID:        req.ModelID,
 		DisplayName:    req.DisplayName,
+		ProviderID:     req.ProviderID,
 		ProviderFamily: req.ProviderFamily,
 		Tags:           req.Tags,
 		IsActive:       req.IsActive,
 		CostPerTurn:    req.CostPerTurn,
 		PriceCoeff:     req.PriceCoeff,
 		SortOrder:      req.SortOrder,
-		ProviderURL:    req.ProviderURL,
-		APIKey:         req.APIKey,
 	}
 
 	if err := services.DB.Create(&pm).Error; err != nil {
@@ -102,17 +159,400 @@ func TogglePlatformModel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "模型状态已切换", "is_active": !pm.IsActive})
 }
 
+// ==================== AI Provider CRUD ====================
+
+// ListProviders 获取 AI 提供商列表（Admin only）
+func ListProviders(c *gin.Context) {
+	var providers []models.AIProvider
+	services.DB.Order("created_at DESC").Find(&providers)
+	c.JSON(http.StatusOK, providers)
+}
+
+// CreateProvider 创建 AI 提供商（Admin only）
+// 创建成功后自动测试连接并将可用模型导入 platform_models
+func CreateProvider(c *gin.Context) {
+	var req models.CreateAIProviderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	provider := models.AIProvider{
+		ID:       "PROV_" + uuid.New().String()[:12],
+		Name:     req.Name,
+		BaseURL:  req.BaseURL,
+		APIKey:   req.APIKey,
+		IsActive: req.IsActive,
+	}
+
+	if err := services.DB.Create(&provider).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建提供商失败"})
+		return
+	}
+
+	// 创建成功后自动测试连接并导入模型
+	importedCount := 0
+	baseURL := strings.TrimRight(provider.BaseURL, "/")
+	var apiURL string
+	if strings.HasSuffix(baseURL, "/v1") {
+		apiURL = baseURL + "/models"
+	} else {
+		apiURL = baseURL + "/v1/models"
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	httpReq, err := http.NewRequest("GET", apiURL, nil)
+	if err == nil {
+		httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(httpReq)
+		if err == nil && resp.StatusCode == 200 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var modelList struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &modelList); err == nil {
+				for _, m := range modelList.Data {
+					displayName := "[" + provider.Name + "] " + m.ID
+					var existing models.PlatformModel
+					result := services.DB.Where("provider_id = ? AND model_id = ?", provider.ID, m.ID).First(&existing)
+					if result.RowsAffected == 0 {
+						newModel := models.PlatformModel{
+							ID:             "PM_" + provider.ID + "_" + m.ID,
+							ModelID:        m.ID,
+							DisplayName:    displayName,
+							ProviderID:     provider.ID,
+							ProviderFamily: provider.Name,
+							IsActive:       true,
+							CostPerTurn:    1,
+							PriceCoeff:     1.0,
+							SortOrder:      0,
+						}
+						services.DB.Create(&newModel)
+						importedCount++
+					}
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"provider":       provider,
+		"imported_count": importedCount,
+	})
+}
+
+// ToggleProvider 切换 AI 提供商启用/禁用状态（Admin only）
+func ToggleProvider(c *gin.Context) {
+	id := c.Param("id")
+
+	var provider models.AIProvider
+	if err := services.DB.First(&provider, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "提供商不存在"})
+		return
+	}
+
+	services.DB.Model(&provider).Update("is_active", !provider.IsActive)
+	c.JSON(http.StatusOK, gin.H{"message": "提供商状态已切换", "is_active": !provider.IsActive})
+}
+
+// UpdateProvider 更新 AI 提供商配置（BaseURL/APIKey），更新后自动测试连接并刷新模型货架（Admin only）
+func UpdateProvider(c *gin.Context) {
+	id := c.Param("id")
+
+	var provider models.AIProvider
+	if err := services.DB.First(&provider, "id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "提供商不存在"})
+		return
+	}
+
+	var req struct {
+		BaseURL string `json:"base_url"`
+		APIKey  string `json:"api_key"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	// 更新字段（只更新非空值）
+	updates := map[string]interface{}{}
+	if req.BaseURL != "" {
+		updates["base_url"] = req.BaseURL
+	}
+	if req.APIKey != "" {
+		updates["api_key"] = req.APIKey
+	}
+	if len(updates) > 0 {
+		if err := services.DB.Model(&provider).Updates(updates).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败"})
+			return
+		}
+		// 重新读取最新数据
+		services.DB.First(&provider, "id = ?", id)
+	}
+
+	// 更新后自动测试连接并刷新模型货架
+	importedCount := 0
+	testOK := false
+	baseURL := strings.TrimRight(provider.BaseURL, "/")
+	var apiURL string
+	if strings.HasSuffix(baseURL, "/v1") {
+		apiURL = baseURL + "/models"
+	} else {
+		apiURL = baseURL + "/v1/models"
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	httpReq, err := http.NewRequest("GET", apiURL, nil)
+	if err == nil {
+		httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(httpReq)
+		if err == nil && resp.StatusCode == 200 {
+			testOK = true
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			var modelList struct {
+				Data []struct {
+					ID string `json:"id"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &modelList); err == nil {
+				for _, m := range modelList.Data {
+					displayName := "[" + provider.Name + "] " + m.ID
+					var existing models.PlatformModel
+					result := services.DB.Where("provider_id = ? AND model_id = ?", provider.ID, m.ID).First(&existing)
+					if result.RowsAffected == 0 {
+						newModel := models.PlatformModel{
+							ID:             "PM_" + provider.ID + "_" + m.ID,
+							ModelID:        m.ID,
+							DisplayName:    displayName,
+							ProviderID:     provider.ID,
+							ProviderFamily: provider.Name,
+							IsActive:       true,
+							CostPerTurn:    1,
+							PriceCoeff:     1.0,
+							SortOrder:      0,
+						}
+						services.DB.Create(&newModel)
+						importedCount++
+					}
+				}
+			}
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"provider":       provider,
+		"test_ok":        testOK,
+		"imported_count": importedCount,
+	})
+}
+
+// ImportProviderModels 从渠道拉取模型列表并批量导入模型货架（Admin only）
+func ImportProviderModels(c *gin.Context) {
+	providerID := c.Param("id")
+
+	var provider models.AIProvider
+	if err := services.DB.First(&provider, "id = ?", providerID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "提供商不存在"})
+		return
+	}
+
+	var req struct {
+		Models []string `json:"models" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	created := 0
+	skipped := 0
+	for _, m := range req.Models {
+		// 检查是否已存在相同 model_id + provider_id 的记录
+		var existing models.PlatformModel
+		if err := services.DB.Where("model_id = ? AND provider_id = ?", m, providerID).First(&existing).Error; err == nil {
+			skipped++
+			continue
+		}
+
+		pm := models.PlatformModel{
+			ID:             "MODEL_" + uuid.New().String()[:12],
+			ModelID:        m,
+			DisplayName:    provider.Name + " " + m,
+			ProviderID:     providerID,
+			ProviderFamily: provider.Name,
+			IsActive:       true,
+			CostPerTurn:    1,
+			PriceCoeff:     1.0,
+		}
+		if err := services.DB.Create(&pm).Error; err != nil {
+			continue
+		}
+		created++
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("导入完成：新增 %d 个模型，跳过 %d 个已存在", created, skipped),
+		"created": created,
+		"skipped": skipped,
+	})
+}
+
+// TestProviderConnection 测试 AI 提供商连接（Admin only）
+// 如果提供了 provider_id，测试成功后自动将模型导入 platform_models
+func TestProviderConnection(c *gin.Context) {
+	var req struct {
+		BaseURL    string `json:"base_url" binding:"required"`
+		APIKey     string `json:"api_key"`     // 当 provider_id 为空时必需
+		ProviderID string `json:"provider_id"` // 可选：已有渠道的 ID，传入后自动导入模型
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误: " + err.Error()})
+		return
+	}
+
+	// 确定 API Key 和 BaseURL
+	apiKey := req.APIKey
+	baseURL := strings.TrimRight(req.BaseURL, "/")
+
+	// 如果传入了 provider_id，从数据库读取 APIKey 和 BaseURL
+	if req.ProviderID != "" {
+		var provider models.AIProvider
+		if err := services.DB.Where("id = ?", req.ProviderID).First(&provider).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "未找到该渠道"})
+			return
+		}
+		apiKey = provider.APIKey
+		baseURL = strings.TrimRight(provider.BaseURL, "/")
+	}
+
+	if apiKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "API Key 不能为空"})
+		return
+	}
+
+	// 兼容 baseURL 已包含 /v1 的情况（如 https://api.deepseek.com/v1）
+	var apiURL string
+	if strings.HasSuffix(baseURL, "/v1") {
+		apiURL = baseURL + "/models"
+	} else {
+		apiURL = baseURL + "/v1/models"
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	httpReq, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建请求失败"})
+		return
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("连接失败: %v", err),
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": fmt.Sprintf("API 返回状态码 %d: %s", resp.StatusCode, string(body)),
+		})
+		return
+	}
+
+	// 尝试解析模型列表
+	var modelList struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	modelNames := []string{}
+	importedCount := 0
+	if err := json.Unmarshal(body, &modelList); err == nil {
+		for _, m := range modelList.Data {
+			modelNames = append(modelNames, m.ID)
+		}
+		// 如果传入了 provider_id，自动将模型导入 platform_models
+		if req.ProviderID != "" {
+			// 查找 provider 获取名称
+			var provider models.AIProvider
+			if err := services.DB.Where("id = ?", req.ProviderID).First(&provider).Error; err == nil {
+				for _, m := range modelList.Data {
+					displayName := "[" + provider.Name + "] " + m.ID
+					var existing models.PlatformModel
+					result := services.DB.Where("provider_id = ? AND model_id = ?", provider.ID, m.ID).First(&existing)
+					if result.RowsAffected == 0 {
+						newModel := models.PlatformModel{
+							ID:             "PM_" + provider.ID + "_" + m.ID,
+							ModelID:        m.ID,
+							DisplayName:    displayName,
+							ProviderID:     provider.ID,
+							ProviderFamily: provider.Name,
+							IsActive:       true,
+							CostPerTurn:    1,
+							PriceCoeff:     1.0,
+							SortOrder:      0,
+						}
+						services.DB.Create(&newModel)
+						importedCount++
+					}
+				}
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":        true,
+		"message":        "连接成功",
+		"models":         modelNames,
+		"imported_count": importedCount,
+	})
+}
+
 // GetDashboard 监控大盘数据（Admin only）
 func GetDashboard(c *gin.Context) {
 	var resp models.DashboardResponse
 
-	// 今日新增用户
 	todayStart := time.Now().Truncate(24 * time.Hour).UnixMilli()
+
+	// 总用户数
+	var totalUsers int64
+	services.DB.Model(&models.User{}).Count(&totalUsers)
+	resp.TotalUsers = int(totalUsers)
+
+	// 今日新增用户
 	var newUsersToday int64
 	services.DB.Model(&models.User{}).
 		Where("created_at >= ?", todayStart).
 		Count(&newUsersToday)
 	resp.NewUsersToday = int(newUsersToday)
+
+	// 总剧本数
+	var totalScenarios int64
+	services.DB.Model(&models.Scenario{}).Count(&totalScenarios)
+	resp.TotalScenarios = int(totalScenarios)
+
+	// 总存档数
+	var totalSaves int64
+	services.DB.Model(&models.Save{}).Count(&totalSaves)
+	resp.TotalSaves = int(totalSaves)
 
 	// 今日消耗积分
 	var pointsConsumed struct {
@@ -123,7 +563,12 @@ func GetDashboard(c *gin.Context) {
 		FROM point_logs
 		WHERE amount < 0 AND created_at >= ?
 	`, todayStart).Scan(&pointsConsumed)
-	resp.PointsConsumed = int(pointsConsumed.Total)
+	resp.TotalPointsUsed = int(pointsConsumed.Total)
+
+	// 活跃模型数
+	var activeModels int64
+	services.DB.Model(&models.PlatformModel{}).Where("is_active = ?", true).Count(&activeModels)
+	resp.ActiveModels = int(activeModels)
 
 	// 最热剧本 Top 5
 	services.DB.Where("status = 1").Order("downloads DESC").Limit(5).Find(&resp.TopScenarios)
@@ -146,6 +591,101 @@ func GetDashboard(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+// BatchTestProviders 批量测试所有活跃渠道的连通性（使用数据库中存储的 APIKey）
+func BatchTestProviders(c *gin.Context) {
+	var providers []models.AIProvider
+	services.DB.Where("is_active = ?", true).Find(&providers)
+
+	type ProviderStatus struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		Online     bool   `json:"online"`
+		Message    string `json:"message"`
+		ModelCount int    `json:"model_count"`
+		NewModels  int    `json:"new_models"`
+	}
+
+	results := []ProviderStatus{}
+	for _, p := range providers {
+		baseURL := strings.TrimRight(p.BaseURL, "/")
+		var apiURL string
+		if strings.HasSuffix(baseURL, "/v1") {
+			apiURL = baseURL + "/models"
+		} else {
+			apiURL = baseURL + "/v1/models"
+		}
+
+		client := &http.Client{Timeout: 10 * time.Second}
+		httpReq, err := http.NewRequest("GET", apiURL, nil)
+		if err != nil {
+			results = append(results, ProviderStatus{ID: p.ID, Name: p.Name, Online: false, Message: "创建请求失败"})
+			continue
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+p.APIKey)
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(httpReq)
+		if err != nil {
+			results = append(results, ProviderStatus{ID: p.ID, Name: p.Name, Online: false, Message: fmt.Sprintf("连接失败: %v", err)})
+			continue
+		}
+
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			results = append(results, ProviderStatus{ID: p.ID, Name: p.Name, Online: false, Message: fmt.Sprintf("HTTP %d", resp.StatusCode)})
+			continue
+		}
+
+		var modelList struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		modelCount := 0
+		newModels := 0
+		if err := json.Unmarshal(body, &modelList); err == nil {
+			modelCount = len(modelList.Data)
+			// 自动同步模型到 platform_models
+			for _, m := range modelList.Data {
+				displayName := "[" + p.Name + "] " + m.ID
+				// 检查是否已存在（同 provider_id + model_id）
+				var existing models.PlatformModel
+				result := services.DB.Where("provider_id = ? AND model_id = ?", p.ID, m.ID).First(&existing)
+				if result.RowsAffected == 0 {
+					// 不存在则创建
+					newModel := models.PlatformModel{
+						ID:             "PM_" + p.ID + "_" + m.ID,
+						ModelID:        m.ID,
+						DisplayName:    displayName,
+						ProviderID:     p.ID,
+						ProviderFamily: p.Name,
+						IsActive:       true,
+						CostPerTurn:    1,
+						PriceCoeff:     1.0,
+						SortOrder:      0,
+					}
+					services.DB.Create(&newModel)
+					newModels++
+				}
+			}
+		}
+
+		results = append(results, ProviderStatus{
+			ID:         p.ID,
+			Name:       p.Name,
+			Online:     true,
+			Message:    "通畅",
+			ModelCount: modelCount,
+			NewModels:  newModels,
+		})
+	}
+
+	c.JSON(http.StatusOK, results)
 }
 
 // GetNotificationCount 获取用户通知数

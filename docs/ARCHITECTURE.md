@@ -1,6 +1,6 @@
 # 架构文档: NIKO 酒馆 — 实际代码状态
 
-> 版本: v2.2 (实际代码快照)
+> 版本: v2.5 (实际代码快照)
 > 对应 PRD: v2.2 (已归档)
 > **本文档 100% 反映当前磁盘上 `.go` / `.ts` / `.tsx` 文件的真实状态。不包含未落地的虚构设计。**
 
@@ -196,7 +196,8 @@ Undo/Reroll → 目标 turn N'
 | saves | id, user_id, scenario_id, **name**, **scenario_title**, save_data, parent_sav_id, created_at, updated_at | [`models/models.go`](backend/models/models.go) |
 | images | id, path, original_name, created_at | [`models/models.go`](backend/models/models.go) |
 | global_configs | key (PK), value, updated_at | [`models/models.go`](backend/models/models.go) |
-| platform_models | id, model_id, display_name, provider_family, provider_url, is_active, cost_per_turn, price_coeff, sort_order, tags, created_at | [`models/models.go`](backend/models/models.go) |
+| ai_providers | id, name, base_url, api_key (json:"-"), is_active, created_at, updated_at | [`models/models.go`](backend/models/models.go) |
+| platform_models | id, model_id, display_name, provider_id (FK → ai_providers.id), provider_family, is_active, cost_per_turn, price_coeff, sort_order, tags, created_at | [`models/models.go`](backend/models/models.go) |
 | point_logs | id, user_id, amount, reason, created_at | [`models/models.go`](backend/models/models.go) |
 | user_encrypted_keys | user_id (PK), encrypted_blob, updated_at | [`models/models.go`](backend/models/models.go) |
 
@@ -243,17 +244,18 @@ Sidebar (w-56, bg-[#1c1d26])          TopBar (h-14)              Main View (flex
 
 > **BYOK 真实 API 握手**：用户填写 endpoint + API Key 后，点击「测试连接并获取模型」发起真实 `GET {endpoint}/models` 请求（Authorization: Bearer），解析 OpenAI 标准格式返回，将模型列表灌入下拉菜单供用户选择。配置统一存储在 `localStorage` key `niko_byok_config`（含 endpoint / apiKey / model 三个字段）。
 
-### 4.4 Admin 页面结构 (v2 — 重塑后)
+### 4.4 Admin 页面结构 (v2.6 — 按 tab 按需自动刷新)
 
-[`Admin.tsx`](frontend/src/pages/Admin.tsx) 使用工业仪表盘风格（高密度、纯色深灰背景、无玻璃拟态），5 个标签页：
+[`Admin.tsx`](frontend/src/pages/Admin.tsx) 使用工业仪表盘风格（高密度、纯色深灰背景、无玻璃拟态），6 个标签页。**切换 tab 时自动刷新该 tab 对应的数据**（通过 `useEffect` 监听 `activeTab` 实现），无需手动刷新：
 
-| 标签页 | 内容 |
-|--------|------|
-| 全局中枢 | L-Master 全局规则编辑器 + 注册奖励积分设置（前端预留，后端 API 未实现持久化） |
-| 仪表盘 | 6 统计卡片（总用户/今日新增/剧本数/存档数/消耗积分/活跃模型）+ 模型健康监测 |
-| 模型货架 | 模型表格（ID/名称/提供商/消耗/系数/状态/操作）+ 添加模型表单 |
-| 用户资产 | 用户表格（ID/用户名/积分/角色/状态/注册时间） |
-| 内容巡查 | 已封禁剧本列表（含封禁理由/时间） |
+| 标签页 | 内容 | 自动刷新数据 |
+|--------|------|-------------|
+| 全局中枢 | L-Master 全局规则编辑器 + 注册奖励积分设置（已实现持久化，通过 `GET/PUT /api/admin/config/register_bonus_points`） | `loadMasterPrompt()` + `loadRegBonus()` |
+| 仪表盘 | 6 统计卡片（总用户/今日新增/剧本数/存档数/消耗积分/活跃模型）+ 模型健康监测 | `loadDashboard()` |
+| 模型货架 | **只读表格**（ID/显示名称/提供商/消耗/系数/状态/操作），显示名自动格式化为 `[渠道名] [模型名]`。**移除手动创建表单**，模型仅通过渠道管理中的「测试并导入」自动添加。 | `loadModels()` |
+| 渠道管理 | AI 提供商表格（名称/Base URL/**连通性状态指示器**/状态/操作）+ 添加渠道表单（名称/API URL/API Key + **测试连接按钮**，调用 `POST /api/admin/providers/test` 验证连通性并返回可用模型列表 + **一键导入模型货架**按钮，调用 `POST /api/admin/providers/:id/import-models` 批量创建 PlatformModel 记录）。已有渠道行新增 **测试并导入** 按钮 → 弹窗输入 API Key → 测试连接 → 一键导入模型。**展开/折叠**按钮显示该渠道下的模型列表（从模型货架按 `provider_id` 过滤）。**长间隔自动连通性检测**（60 秒轮询 `POST /api/admin/providers/health-check`），每行显示绿色/红色状态点 + 模型数量。 | `loadProviders()` + `loadProviderConnectivity()` |
+| 用户资产 | 用户表格（ID/用户名/积分/角色/状态/注册时间）+ **编辑按钮** → 弹窗修改用户名/角色/密码/积分（调用 `PUT /api/admin/users/:id`） | `loadUsers()` |
+| 内容巡查 | 已封禁剧本列表（含封禁理由/时间） | `loadFlaggedScenarios()` |
 
 > **L-Master 迁移**：L-Master 全局规则编辑器从 Settings 迁移至 Admin「全局中枢」tab，普通用户不再可见。
 
@@ -373,7 +375,6 @@ onDone: async (content, turn, userText) => {
 | 无 Markdown AST 渲染 | 对话消息以纯文本 whitespace-pre-wrap 渲染 | 依赖未来 PR |
 | 无 SSE 重连机制 | StreamClient 仅 1 次重试 (1s 延迟)，无指数退避 | 简单场景足够 |
 | **BYOK CORS 限制** | 前端 `fetch(endpoint/models)` 受浏览器同源策略限制，若 endpoint 不支持 CORS 则无法拉取模型列表 | 浏览器安全策略，非前端代码问题。解决方案：后端新增 `/api/user/models/byok` 代理路由 |
-| **注册奖励为前端预留** | Admin「全局中枢」tab 中的注册奖励积分设置仅前端 UI，后端无对应 API | 等待后端实现 |
 | **Settings 导出函数已修复** | 之前 `handleExportData` 中 conversations 收集逻辑被空函数替代，现已修复为真实遍历 saves 收集 | 已修复 |
 | **autoSyncRef 已修复** | 之前 `autoSyncRef.current` 初始化为空函数 `async () => {}`，从未被赋值 | 已修复 v1.2：使用 ref 捕获最新状态的真实同步函数 |
 | **L1_Summary 生命周期已修复** | 之前 forkSave/deleteSave/resetMemory 均遗漏 L1_Summary | 已修复 v1.2：三个操作均已补充 L1_Summary 处理 |
@@ -409,11 +410,20 @@ onDone: async (content, turn, userText) => {
 | GET | /api/user/encrypted-key | JWT | GetEncryptedKey | [`handlers/encrypted_key.go`](backend/handlers/encrypted_key.go) |
 | GET | /api/admin/dashboard | Admin | GetDashboard (含模型健康) | [`handlers/admin.go`](backend/handlers/admin.go) |
 | GET | /api/admin/users | Admin | ListUsers | [`handlers/admin.go`](backend/handlers/admin.go) |
-| PUT | /api/admin/users/:id/points | Admin | UpdateUserPoints (含 PointLog) | [`handlers/admin.go`](backend/handlers/admin.go) |
+| **PUT** | **/api/admin/users/:id** | **Admin** | **UpdateUser (编辑用户名/角色/密码/积分)** | [`handlers/admin.go`](backend/handlers/admin.go) |
+| POST | /api/admin/users/:id/points | Admin | UpdateUserPoints (含 PointLog) | [`handlers/admin.go`](backend/handlers/admin.go) |
 | GET | /api/admin/platform-models | Admin | ListPlatformModels | [`handlers/admin.go`](backend/handlers/admin.go) |
 | POST | /api/admin/platform-models | Admin | CreatePlatformModel | [`handlers/admin.go`](backend/handlers/admin.go) |
 | PUT | /api/admin/platform-models/:id/toggle | Admin | TogglePlatformModel | [`handlers/admin.go`](backend/handlers/admin.go) |
+| GET | /api/admin/providers | Admin | ListProviders | [`handlers/admin.go`](backend/handlers/admin.go) |
+| POST | /api/admin/providers | Admin | CreateProvider | [`handlers/admin.go`](backend/handlers/admin.go) |
+| POST | /api/admin/providers/:id/toggle | Admin | ToggleProvider | [`handlers/admin.go`](backend/handlers/admin.go) |
+| **POST** | **/api/admin/providers/:id/import-models** | **Admin** | **ImportProviderModels (一键导入渠道模型到模型货架，自动格式化显示名为 `[渠道名] [模型名]`，跳过已存在)** | [`handlers/admin.go`](backend/handlers/admin.go) |
+| **POST** | **/api/admin/providers/test** | **Admin** | **TestProviderConnection (测试渠道连通性 + 返回模型列表)** | [`handlers/admin.go`](backend/handlers/admin.go) |
+| **POST** | **/api/admin/providers/health-check** | **Admin** | **BatchTestProviders (批量测试所有活跃渠道连通性，返回 `{id, name, online, message, model_count}[]`)** | [`handlers/admin.go`](backend/handlers/admin.go) |
 | GET | /api/admin/notifications/count | Admin | GetNotificationCount | [`handlers/admin.go`](backend/handlers/admin.go) |
+| GET | /api/admin/config/:key | Admin | GetGlobalConfig | [`handlers/config.go`](backend/handlers/config.go) |
+| PUT | /api/admin/config/:key | Admin | UpdateGlobalConfig | [`handlers/config.go`](backend/handlers/config.go) |
 
 > **粗体** = v1.2 新增路由。
 
@@ -435,18 +445,18 @@ onDone: async (content, turn, userText) => {
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| [`backend/cmd/server/main.go`](backend/cmd/server/main.go) | 128 | Gin 路由注册 + CORS |
+| [`backend/cmd/server/main.go`](backend/cmd/server/main.go) | 150 | Gin 路由注册 + CORS |
 | [`backend/config/config.go`](backend/config/config.go) | 61 | 环境变量配置 |
-| [`backend/models/models.go`](backend/models/models.go) | 191 | GORM 模型 + DTO (含 UserEncryptedKey, Image, PointLog, GlobalConfig, PlatformModel) |
+| [`backend/models/models.go`](backend/models/models.go) | 221 | GORM 模型 + DTO (含 AIProvider, PlatformModel, UserEncryptedKey, Image, PointLog, GlobalConfig, UpdateUserRequest) |
 | [`backend/middleware/auth.go`](backend/middleware/auth.go) | 90 | JWT 生成/验证/中间件 |
-| [`backend/services/database.go`](backend/services/database.go) | 188 | SQLite 初始化 + FTS5 + 默认 L-Master |
+| [`backend/services/database.go`](backend/services/database.go) | 204 | SQLite 初始化 + FTS5 + 默认 L-Master + 默认 AI 提供商 + 默认模型 |
 | [`backend/services/health.go`](backend/services/health.go) | 133 | Ring Buffer 健康监测 (100 条/模型, RWMutex) |
 | [`backend/handlers/auth.go`](backend/handlers/auth.go) | 106 | 注册 (含 bonus 积分) + 登录 |
 | [`backend/handlers/scenario.go`](backend/handlers/scenario.go) | 270 | 剧本 CRUD + FTS5 搜索 + 封禁 |
 | [`backend/handlers/save.go`](backend/handlers/save.go) | 127 | 存档 CRUD (含 UpdateSave v1.2 新增) |
-| [`backend/handlers/config.go`](backend/handlers/config.go) | 40 | L-Master 配置 |
+| [`backend/handlers/config.go`](backend/handlers/config.go) | 64 | L-Master 配置 + 全局配置 CRUD |
 | [`backend/handlers/chat.go`](backend/handlers/chat.go) | 144 | Chat Proxy + 预扣积分 + 健康记录 |
-| [`backend/handlers/admin.go`](backend/handlers/admin.go) | 163 | 管理控制台 (仪表盘/用户/模型/通知) |
+| [`backend/handlers/admin.go`](backend/handlers/admin.go) | 476 | 管理控制台 (仪表盘/用户/模型/通知/AI Provider CRUD + 用户编辑 + 渠道测试 + 批量连通性检测) |
 | [`backend/handlers/image.go`](backend/handlers/image.go) | 87 | 图片上传 (≤30KB, UUID 命名) |
 | [`backend/handlers/encrypted_key.go`](backend/handlers/encrypted_key.go) | 66 | 零信任加密密钥存储 (upsert + 查询) |
 | [`backend/handlers/user_points.go`](backend/handlers/user_points.go) | 57 | 用户积分查询 + 模型健康状态 (公开) |
@@ -465,7 +475,7 @@ onDone: async (content, turn, userText) => {
 | [`frontend/src/db/index.ts`](frontend/src/db/index.ts) | 370 | IndexedDB CRUD (5 表 + forkSave + createSaveFromScenario + createSaveFromApiScenario) |
 | [`frontend/src/worker/memoryEngine.ts`](frontend/src/worker/memoryEngine.ts) | 135 | Web Worker L2 fallback 计算 (Comlink 暴露) |
 | [`frontend/src/services/MemoryLoaderService.ts`](frontend/src/services/MemoryLoaderService.ts) | 369 | 记忆加载器 (IndexedDB 读取 + AI 模型调用 + afterResponse 触发 L1/L2/L3 顺序执行 + Promise chain queue 防竞态) |
-| [`frontend/src/utils/api.ts`](frontend/src/utils/api.ts) | 375 | HTTP 请求封装 (JWT 注入 + 类型化 API 函数，含 updateSave v1.2 新增) |
+| [`frontend/src/utils/api.ts`](frontend/src/utils/api.ts) | 420 | HTTP 请求封装 (JWT 注入 + 类型化 API 函数，含 AI Provider CRUD + updateSave + getGlobalConfig/updateGlobalConfig + adminUpdateUser + adminTestProviderConnection + adminBatchTestProviders) |
 | [`frontend/src/utils/crypto.ts`](frontend/src/utils/crypto.ts) | 130 | 零信任 AES-GCM 端侧加密 (PBKDF2 600K 迭代) |
 | [`frontend/src/utils/characterCard.ts`](frontend/src/utils/characterCard.ts) | 384 | 角色卡导入 (PNG chunk 解析 + V2 JSON + Prologue HTML 生成) |
 | [`frontend/src/utils/playEngineHelpers.ts`](frontend/src/utils/playEngineHelpers.ts) | 102 | 游玩引擎纯函数 (loadByokConfig + createMemoryModelCaller) |
@@ -481,7 +491,7 @@ onDone: async (content, turn, userText) => {
 | [`frontend/src/pages/Saves.tsx`](frontend/src/pages/Saves.tsx) | 549 | 存档管理 (按剧本分组 + 多分支树 + flattenSaveTree 外部纯函数 + CSS L 型折线 + ColorOS 卡片) |
 | [`frontend/src/pages/Creator.tsx`](frontend/src/pages/Creator.tsx) | 677 | 创作 (四 Tab/角色卡导入/编辑模式/Blueprint 预览) |
 | [`frontend/src/pages/Settings.tsx`](frontend/src/pages/Settings.tsx) | 535 | **个人设置**：三垂直 tab（账号与资产 / 算力通道(BYOK 真实 API 握手) / 数据管理）。不含管理功能。 |
-| [`frontend/src/pages/Admin.tsx`](frontend/src/pages/Admin.tsx) | 487 | **管理控制台**：五工业风 tab（全局中枢 / 仪表盘 / 模型货架 / 用户资产 / 内容巡查）。高密度、无玻璃拟态。 |
+| [`frontend/src/pages/Admin.tsx`](frontend/src/pages/Admin.tsx) | 1008 | **管理控制台**：六工业风 tab（全局中枢 / 仪表盘 / 模型货架 / 渠道管理 / 用户资产 / 内容巡查）。高密度、无玻璃拟态。含用户编辑弹窗 + 渠道测试连接 + 一键导入模型 + 已有渠道测试并导入弹窗 + 渠道展开模型列表 + 60s 自动连通性检测 + 按 tab 按需自动刷新。模型货架只读，模型仅通过渠道导入。 |
 | [`frontend/src/pages/Play.tsx`](frontend/src/pages/Play.tsx) | 156 | 游玩界面 (Prologue/Greeting/Swipe/Undo/Reroll/Edit/Fork/Worldbook/Memory/Export/SaveSwitcher/AuthorNotes/L2高亮/Token显示/引擎状态灯 + 流式开关 + MemoryInspector 侧边栏) |
 | [`frontend/src/hooks/usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts) | 476 | **编排层 Hook** — 组合 usePlayStorage + useAIComm，纯事件路由。v2.0 从 972 行 God Object 瘦身至此。 |
 | [`frontend/src/hooks/usePlayStorage.ts`](frontend/src/hooks/usePlayStorage.ts) | 581 | **存储层 Hook** — hydrate/autoSync/CRUD/ref 管理。v2.0 从 usePlayEngine 提取。 |
@@ -558,3 +568,16 @@ onDone: async (content, turn, userText) => {
 | 63 | **AI 渠道/模型偏好持久化 (v2.1)** | 每次刷新页面模型选择重置为默认值 | 已修复：`useAIComm` 初始化时从 `localStorage` 读取 `ai_model_pref`，`InputConsole` 切换模型时写入 `localStorage`。见 [`useAIComm.ts`](frontend/src/hooks/useAIComm.ts) / [`InputConsole.tsx`](frontend/src/components/play/InputConsole.tsx) |
 | 64 | **硬编码值清理 (v2.1)** | `useAIComm.ts` 中 `'gpt-3.5-turbo'` 回退模型名、`'http://localhost:8080'` 硬编码地址 | 已清理：`'gpt-3.5-turbo'` → `''` 空字符串；`'http://localhost:8080/api/chat/proxy'` → `'/api/chat/proxy'`（Vite 代理转发）。涉及 [`useAIComm.ts`](frontend/src/hooks/useAIComm.ts)、[`playEngineHelpers.ts`](frontend/src/utils/playEngineHelpers.ts)、[`StreamClient.ts`](frontend/src/engine/StreamClient.ts) 共 4 处。 |
 | 65 | **过期注释清理 (v2.1)** | 文件中残留 `// v1.8:`、`// v2.1:`、`// v3:`、`// v4:` 版本标记注释 | 已清理：移除 [`usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts) 中 `// v1.8:` 前缀、[`MemoryLoaderService.ts`](frontend/src/services/MemoryLoaderService.ts) 中 `// v2.1:` 整行、[`Lobby.tsx`](frontend/src/pages/Lobby.tsx) 中 `// v3:` 整行、[`Saves.tsx`](frontend/src/pages/Saves.tsx) 中 `// v4:` 前缀、[`MemoryInspector.tsx`](frontend/src/components/play/MemoryInspector.tsx) 中 "上帝控制台" 用语。共 5 处。 |
+| 66 | **仪表盘字段补齐 (v2.2 修复)** | `DashboardResponse` 缺少 `total_users`/`total_scenarios`/`total_saves`/`total_points_used`/`active_models` 5 个字段，前端 6 统计卡片只有 1 个有数据 | 已修复：`DashboardResponse` 结构体新增 5 字段，`GetDashboard` 重写查询所有指标。见 [`models/models.go`](backend/models/models.go) / [`handlers/admin.go`](backend/handlers/admin.go) |
+| 67 | **模型健康 API 路径错误 (v2.2 修复)** | 前端调用 `GET /api/models/health`，后端路由为 `GET /api/admin/models/health`（需 Admin 认证），导致 401 | 已修复：前端路径改为 `/admin/models/health`。见 [`api.ts`](frontend/src/utils/api.ts) |
+| 68 | **User 模型无 status 字段 (v2.2 修复)** | 前端 Admin 用户表格读取 `u.status === 1`，User 模型无 `status` 字段，所有用户显示为"封禁" | 已修复：移除 `u.status` 条件判断，硬编码显示"正常"。见 [`Admin.tsx`](frontend/src/pages/Admin.tsx) |
+| 69 | **注册奖励积分无后端 API (v2.2 修复)** | Admin「全局中枢」注册奖励积分设置仅前端 mock，`handleSaveRegBonus` 为 TODO 空函数 | 已修复：新增 `GetGlobalConfig`/`UpdateGlobalConfig` handler + 路由，前端改用真实 API 调用。见 [`handlers/config.go`](backend/handlers/config.go) / [`api.ts`](frontend/src/utils/api.ts) / [`Admin.tsx`](frontend/src/pages/Admin.tsx) |
+| 70 | **仪表盘字段名不匹配 (v2.2 修复)** | 后端返回 `points_consumed_today`，前端读取 `total_points_used` | 已修复：后端 JSON 标签改为 `total_points_used`。见 [`models/models.go`](backend/models/models.go) |
+| 71 | **AI 多渠道架构 (v2.3 新增)** | `PlatformModel` 直接存储 `ProviderURL`/`APIKey`，每个模型独立配置，无法统一管理渠道 | 已重构：新增 `AIProvider` 表（id/name/base_url/api_key/is_active），`PlatformModel` 移除 `ProviderURL`/`APIKey`，新增 `ProviderID` 外键。`ChatProxy` 改为查询 `PlatformModel` → 解析 `ProviderID` → 查询 `AIProvider` → 使用 provider 的 BaseURL/APIKey。Admin 新增"渠道管理" tab（ListProviders/CreateProvider/ToggleProvider）。种子数据自动创建默认 DeepSeek 提供商。见 [`models/models.go`](backend/models/models.go) / [`handlers/admin.go`](backend/handlers/admin.go) / [`handlers/chat.go`](backend/handlers/chat.go) / [`services/database.go`](backend/services/database.go) / [`Admin.tsx`](frontend/src/pages/Admin.tsx) / [`api.ts`](frontend/src/utils/api.ts) |
+| 72 | **用户编辑功能 (v2.3 新增)** | Admin 用户管理仅支持积分充值，无法修改用户名/角色/密码 | 已新增：`UpdateUserRequest` DTO（username/role/password/points），`UpdateUser` handler（PUT /api/admin/users/:id，支持 bcrypt 密码哈希 + 角色校验 + 可选字段更新），前端用户表格每行"编辑"按钮 → 弹窗表单（用户名/角色下拉/密码留空不修改/积分直接设定）→ 调用 `adminUpdateUser()`。见 [`models/models.go`](backend/models/models.go) / [`handlers/admin.go`](backend/handlers/admin.go) / [`api.ts`](frontend/src/utils/api.ts) / [`Admin.tsx`](frontend/src/pages/Admin.tsx) |
+| 73 | **渠道连接测试 (v2.3 新增)** | 渠道创建表单无验证手段，管理员无法确认 BaseURL/APIKey 是否有效 | 已新增：`TestProviderConnection` handler（POST /api/admin/providers/test，调用 `GET {base_url}/v1/models` 验证连通性，返回 success/message/models 列表），前端创建表单"测试连接"按钮 → 显示成功/失败状态 + 可用模型列表。见 [`handlers/admin.go`](backend/handlers/admin.go) / [`api.ts`](frontend/src/utils/api.ts) / [`Admin.tsx`](frontend/src/pages/Admin.tsx) |
+| 74 | **模型货架跟随渠道 (v2.4 重构)** | 模型货架 tab 有手动创建表单，管理员需手动填写 model_id/display_name/provider_id 等字段，与渠道管理重复 | 已重构：模型货架 tab **移除手动创建表单**，改为只读表格。新增 `ImportProviderModels` handler（POST /api/admin/providers/:id/import-models，接收模型名列表，自动格式化显示名为 `[渠道名] [模型名]`，跳过已存在记录）。渠道管理 tab 新增：测试连接成功后显示 **一键导入模型货架** 按钮（新建渠道先创建再导入）；已有渠道行新增 **测试并导入** 按钮 → 弹窗输入 API Key → 测试连接 → 一键导入。见 [`handlers/admin.go`](backend/handlers/admin.go) / [`api.ts`](frontend/src/utils/api.ts) / [`Admin.tsx`](frontend/src/pages/Admin.tsx) |
+| 75 | **渠道展开模型列表 + 自动连通性检测 + 模型自动同步 (v2.5 新增)** | 渠道管理 tab 仅显示渠道名称/URL/状态，无法查看该渠道下有哪些模型；无自动连通性检测；`BatchTestProviders` 仅返回 model_count 数字，未实际导入模型到货架 | 已新增：渠道表格新增 **展开/折叠** 按钮（▶/▼），展开后显示该渠道下所有模型标签（从模型货架按 `provider_id` 过滤）。`BatchTestProviders` handler（POST /api/admin/providers/health-check）批量测试所有活跃渠道的 `/v1/models` 端点，**自动同步新模型到 `platform_models` 表**（按 `provider_id + model_id` 去重，显示名格式 `[渠道名] [模型名]`），返回 `{id, name, online, message, model_count, new_models}[]`。前端新增 `providerConnectivity` 状态 map + 60 秒 `setInterval` 轮询自动检测，每行显示绿色/红色状态点 + 模型数量，`new_models > 0` 时自动刷新模型列表并弹出通知。见 [`handlers/admin.go`](backend/handlers/admin.go) / [`api.ts`](frontend/src/utils/api.ts) / [`Admin.tsx`](frontend/src/pages/Admin.tsx) |
+| 76 | **数据库 schema 迁移：移除 platform_models 废弃列 (v2.5 修复)** | `PlatformModel` Go 结构体已移除 `ProviderURL`/`APIKey` 字段，但 SQLite 数据库仍保留 `provider_url`(NOT NULL)/`api_key`(NOT NULL) 列，导致 `BatchTestProviders` 和 `ImportProviderModels` 创建新记录时触发 `NOT NULL constraint failed` | 已修复：执行 `ALTER TABLE platform_models DROP COLUMN provider_url` 和 `ALTER TABLE platform_models DROP COLUMN api_key`（SQLite 3.35.0+ 支持）。迁移后 `platform_models` 表 schema 与 Go 结构体完全一致。见 [`models/models.go`](backend/models/models.go) |
+| 77 | **ChatProxy 查询字段修复：id → model_id (v2.5 数据链修复)** | `ChatProxy` 按 `WHERE id = ?` 查询 `PlatformModel`，但 `BatchTestProviders` 自动同步的模型 ID 格式为 `PM_{providerID}_{modelID}`（如 `PM_PROV_DEEPSEEK_deepseek-chat`），而前端 `InputConsole` 将 `model_id`（如 `deepseek-chat`）作为 `modelKey` 发送给后端，导致查询不到记录，返回 400 "该模型暂未开放或已下架" | 已修复：`ChatProxy` 改为 `WHERE model_id = ? AND is_active = ?` 查询，与前端传递的 `model_id` 字段对齐。见 [`handlers/chat.go`](backend/handlers/chat.go) |
+| 78 | **管理页面按 tab 按需自动刷新 (v2.6 新增)** | 管理页面仅在初始化时加载一次数据，切换 tab 或执行写操作后需手动刷新才能看到最新数据 | 已新增：`useEffect` 监听 `activeTab` 变化，切换 tab 时自动刷新该 tab 对应的数据（hub→master+regbonus, dashboard→仪表盘, models→模型货架, providers→渠道+连通性, users→用户列表, moderation→内容巡查）。移除 tab 切换按钮中的手动 `loadFlaggedScenarios()`/`loadDashboard()` 调用。保留渠道连通性 60 秒独立轮询。见 [`Admin.tsx`](frontend/src/pages/Admin.tsx) |

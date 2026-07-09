@@ -38,3 +38,37 @@ func UpdateMasterPrompt(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "L-Master 已更新，下一回合自动生效"})
 }
+
+// GetGlobalConfig 获取指定全局配置（Admin only）
+func GetGlobalConfig(c *gin.Context) {
+	key := c.Param("key")
+	var config models.GlobalConfig
+	if err := services.DB.Where("key = ?", key).First(&config).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "配置不存在"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"key": config.Key, "value": config.Value})
+}
+
+// UpdateGlobalConfig 更新指定全局配置（Admin only）
+func UpdateGlobalConfig(c *gin.Context) {
+	key := c.Param("key")
+	var req struct {
+		Value string `json:"value" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "参数错误"})
+		return
+	}
+
+	var config models.GlobalConfig
+	result := services.DB.Where("key = ?", key).First(&config)
+	if result.Error != nil {
+		config = models.GlobalConfig{Key: key, Value: req.Value}
+		services.DB.Create(&config)
+	} else {
+		services.DB.Model(&config).Update("value", req.Value)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "配置已更新"})
+}
