@@ -175,7 +175,7 @@ export const Settings: React.FC = () => {
 
     try {
       const cleanEndpoint = byokConfig.endpoint.replace(/\/+$/, '');
-      const res = await fetch(`${cleanEndpoint}/models`, {
+      const res = await fetch(`${cleanEndpoint}/v1/models`, {
         headers: { 'Authorization': `Bearer ${byokConfig.apiKey}` },
       });
 

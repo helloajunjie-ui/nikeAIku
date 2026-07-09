@@ -37,7 +37,7 @@ func GetModelHealth(c *gin.Context) {
 	for modelID, stats := range healthStats {
 		var pm models.PlatformModel
 		displayName := modelID
-		if err := services.DB.Select("display_name").Where("id = ?", modelID).First(&pm).Error; err == nil {
+		if err := services.DB.Select("display_name").Where("model_id = ?", modelID).First(&pm).Error; err == nil {
 			displayName = pm.DisplayName
 		}
 		result = append(result, ModelHealthItem{

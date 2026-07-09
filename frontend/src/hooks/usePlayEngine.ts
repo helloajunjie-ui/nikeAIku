@@ -167,11 +167,9 @@ export function usePlayEngine(): PlayEngine {
 
   // Hydrate：挂载时恢复游戏状态
   useEffect(() => {
-    let cancelled = false;
-    storage.hydrate().catch((err) => {
-      console.warn('[PlayEngine] Hydration 失败:', err);
-    });
-    return () => { cancelled = true; };
+  	storage.hydrate().catch((err) => {
+  		console.warn('[PlayEngine] Hydration 失败:', err);
+  	});
   }, [currentSave, isAuthenticated]);
 
   // Prologue 解析

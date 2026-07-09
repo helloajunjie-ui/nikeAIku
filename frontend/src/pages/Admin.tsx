@@ -50,7 +50,6 @@ export const Admin: React.FC = () => {
   // ---- 已有渠道测试 & 导入 ----
   const [testingExistingProvider, setTestingExistingProvider] = useState<string | null>(null);
   const [existingTestResult, setExistingTestResult] = useState<{ providerId: string; success: boolean; message: string; models?: string[]; imported_count?: number } | null>(null);
-  const [importingModels, setImportingModels] = useState(false);
 
   // ---- 编辑渠道 ----
   const [editingProvider, setEditingProvider] = useState<api.AdminProvider | null>(null);
@@ -290,28 +289,6 @@ export const Admin: React.FC = () => {
     }
   }
 
-  async function handleImportModels(providerId: string, models: string[]) {
-  	 setImportingModels(true);
-  	 try {
-  	   // 如果是新建渠道（尚未创建），先创建渠道
-  	   let targetId = providerId;
-  	   if (providerId === '__new__') {
-  	     const result = await api.adminCreateProvider(newProvider);
-  	     setProviders((prev) => [...prev, result.provider]);
-  	     targetId = result.provider.id;
-  	     setShowNewProvider(false);
-  	     setNewProvider({ name: '', base_url: '', api_key: '' });
-  	   }
-  	   const result = await api.adminImportProviderModels(targetId, models);
-  	   addNotification({ type: 'success', message: result.message });
-  	   loadModels();
-  	   loadProviders();
-  	 } catch {
-  	   addNotification({ type: 'error', message: '导入失败' });
-  	 } finally {
-  	   setImportingModels(false);
-  	 }
-  }
 
   async function handleTestExistingProvider(providerId: string) {
   	 const provider = providers.find(p => p.id === providerId);
@@ -521,7 +498,7 @@ export const Admin: React.FC = () => {
               </button>
             </div>
             <p className="text-xs text-gray-600 mt-2">
-              ⚠ 当前为前端预留字段，后端 API 尚未实现持久化
+              新用户注册时自动赠送的积分数量
             </p>
           </div>
         </div>
@@ -573,6 +550,12 @@ export const Admin: React.FC = () => {
         <div>
           <div className="mb-3 flex items-center justify-between">
             <p className="text-[10px] text-gray-600">模型通过渠道管理中的「测试并导入」自动添加，格式: [渠道名] [模型名]</p>
+            <button
+              onClick={loadModels}
+              className="px-3 py-1.5 bg-[#2a2b36] hover:bg-[#3a3b46] text-gray-400 rounded text-xs transition-colors"
+            >
+              刷新
+            </button>
           </div>
 
           <div className="bg-[#1c1d26] rounded-lg border border-[#2a2b36] overflow-hidden">
@@ -656,17 +639,7 @@ export const Admin: React.FC = () => {
         				<div className={`p-2 rounded text-xs ${testResult.success ? 'bg-green-900/20 text-green-400 border border-green-800/30' : 'bg-red-900/20 text-red-400 border border-red-800/30'}`}>
         					<p className="mb-1">{testResult.message}</p>
         					{testResult.models && testResult.models.length > 0 && (
-        						<>
-        							<p className="mt-1 text-gray-400">可用模型: {testResult.models.join(', ')}</p>
-        							<button
-        								type="button"
-        								onClick={() => handleImportModels('__new__', testResult.models!)}
-        								disabled={importingModels}
-        								className="mt-2 px-3 py-1 bg-purple-700 hover:bg-purple-600 disabled:bg-gray-700 text-purple-200 rounded text-[10px] font-medium transition-colors"
-        							>
-        								{importingModels ? '导入中...' : '一键导入模型货架'}
-        							</button>
-        						</>
+        						<p className="mt-1 text-gray-400">可用模型: {testResult.models.join(', ')}</p>
         					)}
         				</div>
         			)}
@@ -781,7 +754,7 @@ export const Admin: React.FC = () => {
         					<div className="flex items-center gap-2">
         						<button
         							onClick={() => handleTestExistingProvider(testingExistingProvider)}
-        							disabled={testingExistingProvider === testingExistingProvider}
+        							disabled={testingExistingProvider === null}
         							className="px-4 py-1.5 bg-blue-700 hover:bg-blue-600 disabled:bg-gray-700 text-blue-200 rounded text-xs font-medium transition-colors"
         						>
         							{testingExistingProvider ? '测试中...' : '测试连接并导入模型'}
@@ -827,7 +800,13 @@ export const Admin: React.FC = () => {
         						/>
         					</div>
         					<div>
-        						<label className="text-[10px] text-gray-500 block mb-1">API Key（留空不修改）</label>
+        						<label className="text-[10px] text-gray-500 block mb-1">
+        							API Key
+        							{editingProvider.has_api_key
+        								? <span className="text-green-400 ml-1">✅ 已设置</span>
+        								: <span className="text-red-400 ml-1">❌ 未设置</span>}
+        							（留空不修改）
+        						</label>
         						<input
         							value={editProviderForm.api_key}
         							onChange={(e) => setEditProviderForm({ ...editProviderForm, api_key: e.target.value })}

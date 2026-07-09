@@ -91,21 +91,38 @@ func ChatProxy(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	// 记录健康数据
-	services.RecordHealth(model.ModelID, resp.StatusCode == http.StatusOK, latencyMs)
-
 	if resp.StatusCode != http.StatusOK {
 		// 上游错误，回滚积分
 		rollbackPoints(userID.(string), model.CostPerTurn)
+		services.RecordHealth(model.ModelID, false, latencyMs)
 		body, _ := io.ReadAll(resp.Body)
 		c.JSON(http.StatusBadGateway, gin.H{"error": "上游 API 返回错误", "detail": string(body)})
 		return
 	}
 
+	// 记录健康数据（流式：记录响应头到达时间；非流式：在读取完整 body 后重新计时）
+	if req.Stream {
+		services.RecordHealth(model.ModelID, true, latencyMs)
+	} else {
+		// 非流式：读取完整 body 后重新计算 latency
+		body, err := io.ReadAll(resp.Body)
+		nonStreamLatencyMs := time.Since(startTime).Milliseconds()
+		if err != nil {
+			rollbackPoints(userID.(string), model.CostPerTurn)
+			services.RecordHealth(model.ModelID, false, nonStreamLatencyMs)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "读取上游响应失败"})
+			return
+		}
+		services.RecordHealth(model.ModelID, true, nonStreamLatencyMs)
+		c.Data(http.StatusOK, "application/json", body)
+		return
+	}
+
 	// 记录账本（异步）
 	go func() {
+		now := time.Now()
 		services.DB.Create(&models.PointLog{
-			ID:     "LOG_" + time.Now().Format("150405") + userID.(string)[:8],
+			ID:     "LOG_" + now.Format("150405.000") + "_" + userID.(string)[:8],
 			UserID: userID.(string),
 			Amount: -model.CostPerTurn,
 			Reason: "游玩扣除: " + model.DisplayName,
@@ -113,17 +130,19 @@ func ChatProxy(c *gin.Context) {
 	}()
 
 	// 透传 SSE 流
-	if req.Stream {
-		c.Writer.Header().Set("Content-Type", "text/event-stream")
-		c.Writer.Header().Set("Cache-Control", "no-cache")
-		c.Writer.Header().Set("Connection", "keep-alive")
-		c.Writer.WriteHeader(http.StatusOK)
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.WriteHeader(http.StatusOK)
 
-		io.Copy(c.Writer, resp.Body)
-	} else {
-		// 非流式直接返回
-		body, _ := io.ReadAll(resp.Body)
-		c.Data(http.StatusOK, "application/json", body)
+	written, err := io.Copy(c.Writer, resp.Body)
+	// 如果流传输中断（客户端断开），回滚积分
+	if err != nil {
+		rollbackPoints(userID.(string), model.CostPerTurn)
+	}
+	// 如果没有任何数据写入，也回滚积分
+	if written == 0 {
+		rollbackPoints(userID.(string), model.CostPerTurn)
 	}
 }
 

@@ -1,6 +1,6 @@
 # 架构文档: NIKO 酒馆 — 实际代码状态
 
-> 版本: v2.5 (实际代码快照)
+> 版本: v2.8 (实际代码快照)
 > 对应 PRD: v2.2 (已归档)
 > **本文档 100% 反映当前磁盘上 `.go` / `.ts` / `.tsx` 文件的真实状态。不包含未落地的虚构设计。**
 
@@ -87,6 +87,11 @@
 | **过期注释清理 (v2.1)** | ✅ **已清理** | 移除 `v1.8`/`v2.1`/`v3`/`v4` 版本标记注释，清理 `MemoryInspector.tsx` 非正式用语，见 [`usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts) / [`MemoryLoaderService.ts`](frontend/src/services/MemoryLoaderService.ts) / [`Saves.tsx`](frontend/src/pages/Saves.tsx) / [`Lobby.tsx`](frontend/src/pages/Lobby.tsx) / [`MemoryInspector.tsx`](frontend/src/components/play/MemoryInspector.tsx) |
 | **max_tokens: 8192 默认值 (v2.2)** | ✅ **已修复** | StreamClient 平台代理和 BYOK 直连 payload 均添加 `max_tokens: 8192`，记忆引擎 BYOK/平台代理 payload 同样添加，见 [`StreamClient.ts`](frontend/src/engine/StreamClient.ts) / [`playEngineHelpers.ts`](frontend/src/utils/playEngineHelpers.ts) |
 | **流式/非流式开关 (v2.2)** | ✅ **已新增** | 模型选择栏右侧新增 🌊 流式/📦 非流 切换开关，持久化到 `niko_use_stream` localStorage。非流模式走独立 fetch 路径（`stream: false`），一次性返回完整响应。见 [`InputConsole.tsx`](frontend/src/components/play/InputConsole.tsx) / [`useAIComm.ts`](frontend/src/hooks/useAIComm.ts) / [`usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts) / [`Play.tsx`](frontend/src/pages/Play.tsx) |
+| **Bug #18: PointLog ID 毫秒级碰撞 (v2.7 修复)** | ✅ **已修复** | `chat.go:106` — 同一秒内同一用户创建多个 PointLog 时 ID 格式 `LOG_${now.Format("150405")}${userID}` 会碰撞。已修复：格式改为 `LOG_${now.Format("150405.000")}_${userID[:8]}`，毫秒精度 + 下划线分隔。见 [`handlers/chat.go`](backend/handlers/chat.go:106) |
+| **Bug #19: L1 截断注释/代码不一致 (v2.7 修复)** | ✅ **已修复** | `TokenBudgetManager.ts:91` — 注释写 "150 词" 但实际 `slice(0, 150)` 按字符截断。已修复：注释改为 "150 字符"。见 [`TokenBudgetManager.ts`](frontend/src/engine/TokenBudgetManager.ts:91) |
+| **Bug #20: 未使用的 cancelled 变量 (v2.7 修复)** | ✅ **已修复** | `usePlayEngine.ts:169` — hydrate useEffect 中声明 `let cancelled = false;` 但从未使用。已修复：移除该变量及 cleanup 函数。见 [`usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts:169) |
+| **Bug #21: 非流式 latency 记录时机错误 (v2.7 修复)** | ✅ **已修复** | `chat.go:95` — 非流模式下 latency 在 `http.Post` 返回后立即记录，此时 `resp.Body` 尚未读取完毕，latency 不包含完整响应时间。已修复：流模式在 response header 到达时记录，非流模式在 `io.ReadAll(resp.Body)` 完成后重新计算。见 [`handlers/chat.go`](backend/handlers/chat.go:95) |
+| **Bug #22: MemoryLoaderService 无超时保护 (v2.7 修复)** | ✅ **已修复** | `MemoryLoaderService.ts:179` — L1/L2/L3 的 `this.modelCaller()` 调用无超时，一个 AI 调用挂起会阻塞整个 Promise chain 队列。已修复：新增 `withTimeout<T>(promise, ms)` 工具函数（30s 超时），包裹所有 3 处 modelCaller 调用。见 [`MemoryLoaderService.ts`](frontend/src/services/MemoryLoaderService.ts:15) |
 
 ---
 
@@ -239,12 +244,12 @@ Sidebar (w-56, bg-[#1c1d26])          TopBar (h-14)              Main View (flex
 | 标签页 | 内容 |
 |--------|------|
 | 账号与资产 | 用户名、角色、积分余额 + 关于信息 |
-| 算力通道 | BYOK 端点 + API Key (`type="password"`) + **[⚡ 测试连接并获取模型]** 按钮 → 真实 `fetch(endpoint/models)` → 动态模型 `<select>` → **[💾 保存 BYOK 配置]** |
+| 算力通道 | BYOK 端点 + API Key (`type="password"`) + **[⚡ 测试连接并获取模型]** 按钮 → 真实 `fetch(endpoint/v1/models)` → 动态模型 `<select>` → **[💾 保存 BYOK 配置]** |
 | 数据管理 | JSON 全量导出/导入备份 |
 
-> **BYOK 真实 API 握手**：用户填写 endpoint + API Key 后，点击「测试连接并获取模型」发起真实 `GET {endpoint}/models` 请求（Authorization: Bearer），解析 OpenAI 标准格式返回，将模型列表灌入下拉菜单供用户选择。配置统一存储在 `localStorage` key `niko_byok_config`（含 endpoint / apiKey / model 三个字段）。
+> **BYOK 真实 API 握手**：用户填写 endpoint + API Key 后，点击「测试连接并获取模型」发起真实 `GET {endpoint}/v1/models` 请求（Authorization: Bearer），解析 OpenAI 标准格式返回，将模型列表灌入下拉菜单供用户选择。配置统一存储在 `localStorage` key `niko_byok_config`（含 endpoint / apiKey / model 三个字段）。
 
-### 4.4 Admin 页面结构 (v2.6 — 按 tab 按需自动刷新)
+### 4.4 Admin 页面结构 (v2.8 — 按 tab 按需自动刷新)
 
 [`Admin.tsx`](frontend/src/pages/Admin.tsx) 使用工业仪表盘风格（高密度、纯色深灰背景、无玻璃拟态），6 个标签页。**切换 tab 时自动刷新该 tab 对应的数据**（通过 `useEffect` 监听 `activeTab` 实现），无需手动刷新：
 
@@ -437,6 +442,8 @@ onDone: async (content, turn, userText) => {
 | TypeScript 前端 | ✅ 零错误 | `tsc --noEmit` 通过 |
 | 前端依赖 | ✅ 已安装 | 233 packages |
 
+> **v2.8 编译验证**：Bug #18-#22 修复后，Go 后端 `go build ./cmd/server/` 零错误，TypeScript 前端 `npx tsc --noEmit` 零错误。
+
 ---
 
 ## 9. 文件清单
@@ -581,3 +588,10 @@ onDone: async (content, turn, userText) => {
 | 76 | **数据库 schema 迁移：移除 platform_models 废弃列 (v2.5 修复)** | `PlatformModel` Go 结构体已移除 `ProviderURL`/`APIKey` 字段，但 SQLite 数据库仍保留 `provider_url`(NOT NULL)/`api_key`(NOT NULL) 列，导致 `BatchTestProviders` 和 `ImportProviderModels` 创建新记录时触发 `NOT NULL constraint failed` | 已修复：执行 `ALTER TABLE platform_models DROP COLUMN provider_url` 和 `ALTER TABLE platform_models DROP COLUMN api_key`（SQLite 3.35.0+ 支持）。迁移后 `platform_models` 表 schema 与 Go 结构体完全一致。见 [`models/models.go`](backend/models/models.go) |
 | 77 | **ChatProxy 查询字段修复：id → model_id (v2.5 数据链修复)** | `ChatProxy` 按 `WHERE id = ?` 查询 `PlatformModel`，但 `BatchTestProviders` 自动同步的模型 ID 格式为 `PM_{providerID}_{modelID}`（如 `PM_PROV_DEEPSEEK_deepseek-chat`），而前端 `InputConsole` 将 `model_id`（如 `deepseek-chat`）作为 `modelKey` 发送给后端，导致查询不到记录，返回 400 "该模型暂未开放或已下架" | 已修复：`ChatProxy` 改为 `WHERE model_id = ? AND is_active = ?` 查询，与前端传递的 `model_id` 字段对齐。见 [`handlers/chat.go`](backend/handlers/chat.go) |
 | 78 | **管理页面按 tab 按需自动刷新 (v2.6 新增)** | 管理页面仅在初始化时加载一次数据，切换 tab 或执行写操作后需手动刷新才能看到最新数据 | 已新增：`useEffect` 监听 `activeTab` 变化，切换 tab 时自动刷新该 tab 对应的数据（hub→master+regbonus, dashboard→仪表盘, models→模型货架, providers→渠道+连通性, users→用户列表, moderation→内容巡查）。移除 tab 切换按钮中的手动 `loadFlaggedScenarios()`/`loadDashboard()` 调用。保留渠道连通性 60 秒独立轮询。见 [`Admin.tsx`](frontend/src/pages/Admin.tsx) |
+| 79 | **Bug #13: GetModelHealth 查询列 id→model_id (v2.6 数据链修复)** | `GetModelHealth` 使用 `Where("id = ?", modelID)` 查询 `PlatformModel`，但 `GetAllHealthStats()` 返回的 map key 是 `model_id`（如 `deepseek-chat`），不是主键 `id`（如 `PM_PROV_DEEPSEEK_deepseek-chat`），导致 `displayName` 始终回退为 `modelID` 原始值 | 已修复：`Where("id = ?", modelID)` → `Where("model_id = ?", modelID)`。与 Bug #3 相同的问题，在 `user_points.go` 中。见 [`backend/handlers/user_points.go`](backend/handlers/user_points.go:40) |
+| 80 | **Bug #17: Settings BYOK 获取模型缺少 /v1 前缀 (v2.6 低级手误)** | `handleFetchModels` 请求 `${cleanEndpoint}/models`，但 OpenAI 兼容 API 的正确路径是 `/v1/models`（如 `https://api.deepseek.com/v1/models`），缺少 `/v1` 前缀导致 404 | 已修复：`${cleanEndpoint}/models` → `${cleanEndpoint}/v1/models`。见 [`frontend/src/pages/Settings.tsx`](frontend/src/pages/Settings.tsx:178) |
+| 81 | **Bug #18: PointLog ID 毫秒级碰撞 (v2.7 修复)** | `chat.go:106` — 同一秒内同一用户创建多个 PointLog 时 ID 格式 `LOG_${now.Format("150405")}${userID}` 会碰撞 | 已修复：格式改为 `LOG_${now.Format("150405.000")}_${userID[:8]}`，毫秒精度 + 下划线分隔。见 [`handlers/chat.go`](backend/handlers/chat.go:106) |
+| 82 | **Bug #19: L1 截断注释/代码不一致 (v2.7 修复)** | `TokenBudgetManager.ts:91` — 注释写 "150 词" 但实际 `slice(0, 150)` 按字符截断 | 已修复：注释改为 "150 字符"。见 [`TokenBudgetManager.ts`](frontend/src/engine/TokenBudgetManager.ts:91) |
+| 83 | **Bug #20: 未使用的 cancelled 变量 (v2.7 修复)** | `usePlayEngine.ts:169` — hydrate useEffect 中声明 `let cancelled = false;` 但从未使用 | 已修复：移除该变量及 cleanup 函数。见 [`usePlayEngine.ts`](frontend/src/hooks/usePlayEngine.ts:169) |
+| 84 | **Bug #21: 非流式 latency 记录时机错误 (v2.7 修复)** | `chat.go:95` — 非流模式下 latency 在 `http.Post` 返回后立即记录，此时 `resp.Body` 尚未读取完毕 | 已修复：流模式在 response header 到达时记录，非流模式在 `io.ReadAll(resp.Body)` 完成后重新计算。见 [`handlers/chat.go`](backend/handlers/chat.go:95) |
+| 85 | **Bug #22: MemoryLoaderService 无超时保护 (v2.7 修复)** | `MemoryLoaderService.ts:179` — L1/L2/L3 的 `this.modelCaller()` 调用无超时，一个 AI 调用挂起会阻塞整个 Promise chain 队列 | 已修复：新增 `withTimeout<T>(promise, ms)` 工具函数（30s 超时），包裹所有 3 处 modelCaller 调用。见 [`MemoryLoaderService.ts`](frontend/src/services/MemoryLoaderService.ts:15) |

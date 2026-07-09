@@ -90,7 +90,7 @@ func (mh *ModelHealth) Status() string {
 	switch {
 	case successRate > 0.95 && avgLatency < 3000:
 		return "通畅"
-	case successRate > 0.80 || avgLatency < 8000:
+	case successRate > 0.80 && avgLatency < 8000:
 		return "拥挤"
 	default:
 		return "异常"

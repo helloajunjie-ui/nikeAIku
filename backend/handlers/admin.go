@@ -161,11 +161,100 @@ func TogglePlatformModel(c *gin.Context) {
 
 // ==================== AI Provider CRUD ====================
 
+// syncProviderModels 测试渠道连接并将可用模型增量导入 platform_models
+// 返回 (测试是否成功, 导入数量, 错误)
+func syncProviderModels(providerID string) (testOK bool, importedCount int) {
+	var provider models.AIProvider
+	if err := services.DB.First(&provider, "id = ?", providerID).Error; err != nil {
+		return false, 0
+	}
+
+	baseURL := strings.TrimRight(provider.BaseURL, "/")
+	var apiURL string
+	if strings.HasSuffix(baseURL, "/v1") {
+		apiURL = baseURL + "/models"
+	} else {
+		apiURL = baseURL + "/v1/models"
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	httpReq, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return false, 0
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(httpReq)
+	if err != nil || resp.StatusCode != 200 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return false, 0
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var modelList struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &modelList); err != nil {
+		return true, 0 // 连接成功但解析失败
+	}
+
+	count := 0
+	for _, m := range modelList.Data {
+		displayName := "[" + provider.Name + "] " + m.ID
+		var existing models.PlatformModel
+		result := services.DB.Where("provider_id = ? AND model_id = ?", provider.ID, m.ID).First(&existing)
+		if result.RowsAffected == 0 {
+			newModel := models.PlatformModel{
+				ID:             "PM_" + provider.ID + "_" + m.ID,
+				ModelID:        m.ID,
+				DisplayName:    displayName,
+				ProviderID:     provider.ID,
+				ProviderFamily: provider.Name,
+				IsActive:       true,
+				CostPerTurn:    1,
+				PriceCoeff:     1.0,
+				SortOrder:      0,
+			}
+			services.DB.Create(&newModel)
+			count++
+		}
+	}
+	return true, count
+}
+
 // ListProviders 获取 AI 提供商列表（Admin only）
+type adminProviderDTO struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	BaseURL   string `json:"base_url"`
+	HasAPIKey bool   `json:"has_api_key"`
+	IsActive  bool   `json:"is_active"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
+}
+
 func ListProviders(c *gin.Context) {
 	var providers []models.AIProvider
 	services.DB.Order("created_at DESC").Find(&providers)
-	c.JSON(http.StatusOK, providers)
+	dtos := make([]adminProviderDTO, len(providers))
+	for i, p := range providers {
+		dtos[i] = adminProviderDTO{
+			ID:        p.ID,
+			Name:      p.Name,
+			BaseURL:   p.BaseURL,
+			HasAPIKey: p.APIKey != "",
+			IsActive:  p.IsActive,
+			CreatedAt: p.CreatedAt,
+			UpdatedAt: p.UpdatedAt,
+		}
+	}
+	c.JSON(http.StatusOK, dtos)
 }
 
 // CreateProvider 创建 AI 提供商（Admin only）
@@ -191,53 +280,7 @@ func CreateProvider(c *gin.Context) {
 	}
 
 	// 创建成功后自动测试连接并导入模型
-	importedCount := 0
-	baseURL := strings.TrimRight(provider.BaseURL, "/")
-	var apiURL string
-	if strings.HasSuffix(baseURL, "/v1") {
-		apiURL = baseURL + "/models"
-	} else {
-		apiURL = baseURL + "/v1/models"
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	httpReq, err := http.NewRequest("GET", apiURL, nil)
-	if err == nil {
-		httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
-		httpReq.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(httpReq)
-		if err == nil && resp.StatusCode == 200 {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			var modelList struct {
-				Data []struct {
-					ID string `json:"id"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(body, &modelList); err == nil {
-				for _, m := range modelList.Data {
-					displayName := "[" + provider.Name + "] " + m.ID
-					var existing models.PlatformModel
-					result := services.DB.Where("provider_id = ? AND model_id = ?", provider.ID, m.ID).First(&existing)
-					if result.RowsAffected == 0 {
-						newModel := models.PlatformModel{
-							ID:             "PM_" + provider.ID + "_" + m.ID,
-							ModelID:        m.ID,
-							DisplayName:    displayName,
-							ProviderID:     provider.ID,
-							ProviderFamily: provider.Name,
-							IsActive:       true,
-							CostPerTurn:    1,
-							PriceCoeff:     1.0,
-							SortOrder:      0,
-						}
-						services.DB.Create(&newModel)
-						importedCount++
-					}
-				}
-			}
-		}
-	}
+	_, importedCount := syncProviderModels(provider.ID)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"provider":       provider,
@@ -296,58 +339,7 @@ func UpdateProvider(c *gin.Context) {
 	}
 
 	// 更新后自动测试连接并刷新模型货架
-	importedCount := 0
-	testOK := false
-	baseURL := strings.TrimRight(provider.BaseURL, "/")
-	var apiURL string
-	if strings.HasSuffix(baseURL, "/v1") {
-		apiURL = baseURL + "/models"
-	} else {
-		apiURL = baseURL + "/v1/models"
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	httpReq, err := http.NewRequest("GET", apiURL, nil)
-	if err == nil {
-		httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
-		httpReq.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(httpReq)
-		if err == nil && resp.StatusCode == 200 {
-			testOK = true
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			var modelList struct {
-				Data []struct {
-					ID string `json:"id"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(body, &modelList); err == nil {
-				for _, m := range modelList.Data {
-					displayName := "[" + provider.Name + "] " + m.ID
-					var existing models.PlatformModel
-					result := services.DB.Where("provider_id = ? AND model_id = ?", provider.ID, m.ID).First(&existing)
-					if result.RowsAffected == 0 {
-						newModel := models.PlatformModel{
-							ID:             "PM_" + provider.ID + "_" + m.ID,
-							ModelID:        m.ID,
-							DisplayName:    displayName,
-							ProviderID:     provider.ID,
-							ProviderFamily: provider.Name,
-							IsActive:       true,
-							CostPerTurn:    1,
-							PriceCoeff:     1.0,
-							SortOrder:      0,
-						}
-						services.DB.Create(&newModel)
-						importedCount++
-					}
-				}
-			}
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-	}
+	testOK, importedCount := syncProviderModels(provider.ID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"provider":       provider,
@@ -578,7 +570,8 @@ func GetDashboard(c *gin.Context) {
 	for modelID, stats := range healthStats {
 		var pm models.PlatformModel
 		displayName := modelID
-		if err := services.DB.Select("display_name").Where("id = ?", modelID).First(&pm).Error; err == nil {
+		// GetAllHealthStats 的 key 是 model_id（即 PlatformModel.ModelID），不是主键 id
+		if err := services.DB.Select("display_name").Where("model_id = ?", modelID).First(&pm).Error; err == nil {
 			displayName = pm.DisplayName
 		}
 		resp.ModelHealth = append(resp.ModelHealth, models.ModelHealthDTO{
@@ -609,78 +602,20 @@ func BatchTestProviders(c *gin.Context) {
 
 	results := []ProviderStatus{}
 	for _, p := range providers {
-		baseURL := strings.TrimRight(p.BaseURL, "/")
-		var apiURL string
-		if strings.HasSuffix(baseURL, "/v1") {
-			apiURL = baseURL + "/models"
-		} else {
-			apiURL = baseURL + "/v1/models"
-		}
-
-		client := &http.Client{Timeout: 10 * time.Second}
-		httpReq, err := http.NewRequest("GET", apiURL, nil)
-		if err != nil {
-			results = append(results, ProviderStatus{ID: p.ID, Name: p.Name, Online: false, Message: "创建请求失败"})
+		testOK, newModels := syncProviderModels(p.ID)
+		if !testOK {
+			results = append(results, ProviderStatus{ID: p.ID, Name: p.Name, Online: false, Message: "连接失败"})
 			continue
 		}
-		httpReq.Header.Set("Authorization", "Bearer "+p.APIKey)
-		httpReq.Header.Set("Content-Type", "application/json")
-
-		resp, err := client.Do(httpReq)
-		if err != nil {
-			results = append(results, ProviderStatus{ID: p.ID, Name: p.Name, Online: false, Message: fmt.Sprintf("连接失败: %v", err)})
-			continue
-		}
-
-		if resp.StatusCode != 200 {
-			resp.Body.Close()
-			results = append(results, ProviderStatus{ID: p.ID, Name: p.Name, Online: false, Message: fmt.Sprintf("HTTP %d", resp.StatusCode)})
-			continue
-		}
-
-		var modelList struct {
-			Data []struct {
-				ID string `json:"id"`
-			} `json:"data"`
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		modelCount := 0
-		newModels := 0
-		if err := json.Unmarshal(body, &modelList); err == nil {
-			modelCount = len(modelList.Data)
-			// 自动同步模型到 platform_models
-			for _, m := range modelList.Data {
-				displayName := "[" + p.Name + "] " + m.ID
-				// 检查是否已存在（同 provider_id + model_id）
-				var existing models.PlatformModel
-				result := services.DB.Where("provider_id = ? AND model_id = ?", p.ID, m.ID).First(&existing)
-				if result.RowsAffected == 0 {
-					// 不存在则创建
-					newModel := models.PlatformModel{
-						ID:             "PM_" + p.ID + "_" + m.ID,
-						ModelID:        m.ID,
-						DisplayName:    displayName,
-						ProviderID:     p.ID,
-						ProviderFamily: p.Name,
-						IsActive:       true,
-						CostPerTurn:    1,
-						PriceCoeff:     1.0,
-						SortOrder:      0,
-					}
-					services.DB.Create(&newModel)
-					newModels++
-				}
-			}
-		}
-
+		// 重新统计该渠道的模型数量
+		var modelCount int64
+		services.DB.Model(&models.PlatformModel{}).Where("provider_id = ?", p.ID).Count(&modelCount)
 		results = append(results, ProviderStatus{
 			ID:         p.ID,
 			Name:       p.Name,
 			Online:     true,
 			Message:    "通畅",
-			ModelCount: modelCount,
+			ModelCount: int(modelCount),
 			NewModels:  newModels,
 		})
 	}

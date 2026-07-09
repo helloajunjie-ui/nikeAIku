@@ -87,13 +87,12 @@ export class TokenBudgetManager {
     const totalBudget = this.config.max_total_tokens - this.config.max_response_tokens;
     let totalTokens = systemTokens + l2Tokens + l1Tokens + historyTokens + userInputTokens;
 
-    // 裁剪 L1（硬截断至 150 词）
+    // 裁剪 L1（硬截断至 150 字符）
     if (totalTokens > totalBudget && l1Tokens > 150) {
-      const words = currentL1.split('');
-      currentL1 = words.slice(0, 150).join('');
-      l1Tokens = this.estimate(currentL1);
-      totalTokens = systemTokens + l2Tokens + l1Tokens + historyTokens + userInputTokens;
-      cuts.push('L1 总结已截断至 150 词');
+    	currentL1 = currentL1.slice(0, 150);
+    	l1Tokens = this.estimate(currentL1);
+    	totalTokens = systemTokens + l2Tokens + l1Tokens + historyTokens + userInputTokens;
+    	cuts.push('L1 总结已截断至 150 字符');
     }
 
     // 裁剪 L2（丢弃匹配度最低的词条）

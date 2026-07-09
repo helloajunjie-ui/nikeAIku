@@ -11,6 +11,16 @@ import type { MemoryEngine } from '../worker/memoryEngine';
 /** AI 模型调用函数签名：输入 prompt，返回 AI 文本回复 */
 export type ModelCaller = (systemPrompt: string, userContent: string) => Promise<string>;
 
+/** 给 modelCaller 加超时包装，防止单次 AI 调用卡住整个 afterResponse queue */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`AI 调用超时 (${ms}ms)`)), ms)
+    ),
+  ]);
+}
+
 // ============================================================
 // 防弹 JSON 提取器 — 用于 L2 AI 返回结果解析
 // 大模型经常在 JSON 外包一层 Markdown 代码块或废话，
@@ -220,7 +230,7 @@ export class MemoryLoaderService implements MemoryLoader {
             })
             .join('\n');
 
-          const result = await this.modelCaller(
+          const result = await withTimeout(this.modelCaller(
             '你是一个拥有上帝视角的「世界设定主编」。请分析最近的对话，提取或更新高价值的剧情实体。\n' +
             '【提取标准】：重点关注人物、地点、重要道具、特殊设定。\n' +
             '【输出格式】：必须返回一个严格的 JSON 数组。每个对象必须包含以下 4 个字段：\n' +
@@ -231,7 +241,7 @@ export class MemoryLoaderService implements MemoryLoader {
             '只返回 JSON 数组，不要任何 Markdown 标记！\n' +
             '示例：[{"name":"阿沅","type":"人物","keywords":["阿沅","小女孩","丫头"],"content":"在坞堡外被赵渊救下的流民女孩..."}]',
             `【已有词条档案】\n${activeWbText || '（无活跃词条）'}\n\n【最近对话】\n${dialogueText}`
-          );
+          ), 30000);
           const parsed = safeParseL2JSON(result);
           if (parsed.length > 0) {
             // 构建已有词条的快速查找 Map（keyword → 对应的 DynamicMemory）
@@ -308,10 +318,10 @@ export class MemoryLoaderService implements MemoryLoader {
           const dialogueText = history
             .map((m) => `${m.role === 'user' ? '玩家' : 'AI'}: ${m.content}`)
             .join('\n');
-          const l1 = await this.modelCaller(
+          const l1 = await withTimeout(this.modelCaller(
             '你是一个对话摘要助手。请用一段简洁的中文总结以下对话中发生的关键事件、玩家决策和剧情进展。输出限制在 300 字以内。只输出总结内容，不要额外解释。',
             dialogueText
-          );
+          ), 30000);
           if (l1 && l1.trim()) {
             await db.putMemory({
               id: `mem-${savId}-L1-${turn}-${Date.now()}`,
@@ -336,13 +346,13 @@ export class MemoryLoaderService implements MemoryLoader {
         try {
           // 取最新的 L1 总结作为 L3 的上下文输入
           const latestL1 = await this.loadL1(savId);
-          const l3 = await this.modelCaller(
+          const l3 = await withTimeout(this.modelCaller(
             `你是一个剧情追踪助手。当前剧情轴：${currentPlot || '（无）'}\n` +
             `最新的对话摘要：${latestL1 || '（无）'}\n` +
             '请根据以上信息，用一段简洁的中文更新剧情进展。保留之前的重要信息，只追加新进展。' +
             '只输出更新后的剧情轴内容，不要额外解释。',
             '根据当前剧情轴和最新的对话摘要，更新剧情进展。'
-          );
+          ), 30000);
           if (l3 && l3.trim()) {
             // L3 落库：绝对覆盖（Overwrite）
             // 使用固定 ID `l3-${savId}`，每次 putMemory 覆盖同一条记录

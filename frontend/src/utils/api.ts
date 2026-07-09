@@ -256,7 +256,6 @@ export interface AdminUser {
   username: string;
   points: number;
   role: string;
-  status: number;
   created_at: number;
   updated_at: number;
 }
@@ -279,6 +278,7 @@ export interface AdminProvider {
   id: string;
   name: string;
   base_url: string;
+  has_api_key: boolean;
   is_active: boolean;
   created_at: number;
   updated_at: number;
